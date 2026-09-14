@@ -602,7 +602,7 @@ function pickModel(
 			updateHelp(list);
 			list.onSelectionChange = (item) => {
 				updateDetails(item);
-				title.setText(theme.fg("accent", theme.bold(`Pick a model (${list.positionLabel()})`));
+				title.setText(theme.fg("accent", theme.bold(`Pick a model (${list.positionLabel()})`)));
 			};
 			list.onStateChange = () => updateHelp(list);
 			list.onToggleHidden = (item) => {
