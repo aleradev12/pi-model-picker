@@ -1,0 +1,535 @@
+/**
+ * Pure core of the model picker: persistence, fuzzy matching, grouping and
+ * the grouped list widget. No pi imports here — everything is injectable so
+ * it can be unit-tested with a temp directory and synthetic models.
+ */
+
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { Key, matchesKey, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+
+/** Structural subset of pi-ai's Model — Model<Api> is assignable to this. */
+export interface PickerModel {
+	provider: string;
+	id: string;
+	name: string;
+}
+
+export interface PickerConfig {
+	reasons: string[];
+	maxRecents: number;
+}
+
+export interface RecentEntry {
+	provider: string;
+	id: string;
+}
+
+interface AgentSettings {
+	defaultProvider?: unknown;
+	defaultModel?: unknown;
+	defaultThinkingLevel?: unknown;
+}
+
+const VALID_REASONS = new Set(["startup", "new", "resume", "fork"]);
+const MAX_PERSISTED_ENTRIES = 15;
+
+export const keyOf = (m: PickerModel): string => `${m.provider}/${m.id}`;
+
+export function isValidReason(reason: string): boolean {
+	return VALID_REASONS.has(reason);
+}
+
+function readJson(path: string): unknown {
+	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/** Atomic JSON write: mkdir -p the parent, write a temp file, rename over. */
+function writeJson(path: string, data: unknown, pretty: "\t" | 2 = "\t"): void {
+	mkdirSync(dirname(path), { recursive: true });
+	const tmp = `${path}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(data, null, pretty)}\n`);
+	renameSync(tmp, path);
+}
+
+export interface Store {
+	configPath: () => string;
+	recentsPath: () => string;
+	favoritesPath: () => string;
+	hiddenPath: () => string;
+	settingsPath: () => string;
+	loadConfig: () => PickerConfig;
+	saveConfig: (config: PickerConfig) => boolean;
+	loadEntries: (path: string) => RecentEntry[];
+	saveEntries: (path: string, entries: RecentEntry[]) => boolean;
+	loadRecents: () => RecentEntry[];
+	saveRecents: (entries: RecentEntry[]) => boolean;
+	loadFavorites: () => RecentEntry[];
+	saveFavorites: (entries: RecentEntry[]) => boolean;
+	loadHidden: () => RecentEntry[];
+	saveHidden: (entries: RecentEntry[]) => boolean;
+	/** Configured default key ("provider/id") resolved against available models. */
+	getConfiguredDefaultKey: (available: PickerModel[]) => string;
+	getConfiguredDefaultThinkingLevel: () => string;
+	/** Persists defaultProvider/defaultModel into settings.json, preserving other keys. */
+	saveConfiguredDefault: (model: PickerModel) => boolean;
+}
+
+export function createStore(agentDir: string): Store {
+	const pathOf = (file: string) => join(agentDir, file);
+
+	const isEntry = (e: unknown): e is RecentEntry =>
+		!!e && typeof e === "object" && typeof (e as RecentEntry).provider === "string" && typeof (e as RecentEntry).id === "string";
+
+	const loadEntries = (path: string): RecentEntry[] => {
+		try {
+			const raw: unknown = readJson(path);
+			return Array.isArray(raw) ? raw.filter(isEntry) : [];
+		} catch {
+			return [];
+		}
+	};
+
+	const saveEntries = (path: string, entries: RecentEntry[]): boolean => {
+		try {
+			writeJson(path, entries.slice(0, MAX_PERSISTED_ENTRIES));
+			return true;
+		} catch {
+			// Optional picker state must never block model selection.
+			return false;
+		}
+	};
+
+	const loadSettings = (): AgentSettings | null => {
+		try {
+			const raw: unknown = readJson(pathOf("settings.json"));
+			return !!raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as AgentSettings) : null;
+		} catch {
+			return null;
+		}
+	};
+
+	return {
+		configPath: () => pathOf("new-model-picker.json"),
+		recentsPath: () => pathOf("new-model-picker-recents.json"),
+		favoritesPath: () => pathOf("new-model-picker-favorites.json"),
+		hiddenPath: () => pathOf("new-model-picker-hidden.json"),
+		settingsPath: () => pathOf("settings.json"),
+
+		loadConfig: () => {
+			const defaults: PickerConfig = { reasons: ["startup", "new"], maxRecents: 5 };
+			try {
+				const raw = readJson(pathOf("new-model-picker.json")) as Partial<PickerConfig>;
+				return {
+					reasons: Array.isArray(raw.reasons)
+						? raw.reasons.filter((r): r is string => typeof r === "string" && VALID_REASONS.has(r))
+						: defaults.reasons,
+					maxRecents:
+						typeof raw.maxRecents === "number"
+							? Math.max(0, Math.min(20, Math.floor(raw.maxRecents)))
+							: defaults.maxRecents,
+				};
+			} catch {
+				return defaults;
+			}
+		},
+
+		saveConfig: (config) => {
+			try {
+				writeJson(pathOf("new-model-picker.json"), config, 2);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+
+		loadEntries,
+		saveEntries,
+		loadRecents: () => loadEntries(pathOf("new-model-picker-recents.json")),
+		saveRecents: (entries) => saveEntries(pathOf("new-model-picker-recents.json"), entries),
+		loadFavorites: () => loadEntries(pathOf("new-model-picker-favorites.json")),
+		saveFavorites: (entries) => saveEntries(pathOf("new-model-picker-favorites.json"), entries),
+		loadHidden: () => loadEntries(pathOf("new-model-picker-hidden.json")),
+		saveHidden: (entries) => saveEntries(pathOf("new-model-picker-hidden.json"), entries),
+
+		getConfiguredDefaultKey: (available) => {
+			const settings = loadSettings();
+			if (typeof settings?.defaultProvider !== "string" || typeof settings?.defaultModel !== "string") {
+				return "";
+			}
+			// defaultModel historically stored a display name; id is canonical.
+			const model = available.find(
+				(m) => m.provider === settings.defaultProvider && (m.id === settings.defaultModel || m.name === settings.defaultModel),
+			);
+			return model ? keyOf(model) : "";
+		},
+
+		getConfiguredDefaultThinkingLevel: () => {
+			const level = loadSettings()?.defaultThinkingLevel;
+			return typeof level === "string" ? level : "";
+		},
+
+		saveConfiguredDefault: (model) => {
+			const settings = loadSettings();
+			// A malformed settings.json is user data — refuse to overwrite it.
+			if (!settings) return false;
+			try {
+				writeJson(pathOf("settings.json"), { ...settings, defaultProvider: model.provider, defaultModel: model.id }, 2);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+	};
+}
+
+/** Fuzzy match: every character of query appears in target in order. */
+export function fuzzyMatch(query: string, target: string): boolean {
+	if (!query) return true;
+	let i = 0;
+	const q = query.toLowerCase();
+	const t = target.toLowerCase();
+	for (const ch of t) {
+		if (ch === q[i]) i++;
+		if (i >= q.length) return true;
+	}
+	return i >= q.length;
+}
+
+export interface ListItem {
+	value: string;
+	label: string;
+	description?: string;
+	inlineDetails?: string[];
+}
+
+export interface ModelGroup {
+	id: string;
+	title: string;
+	items: ListItem[];
+	collapsible: boolean;
+}
+
+export type ManageMode = "favorites" | "hidden" | null;
+
+export interface GroupingInput {
+	/** All available models in stable display order. */
+	ordered: PickerModel[];
+	query: string;
+	manageMode: ManageMode;
+	favoriteKeys: string[];
+	hiddenKeys: string[];
+	recentKeys: string[];
+	defaultKey: string;
+	currentKey: string;
+	maxRecents: number;
+	itemOf: (model: PickerModel) => ListItem;
+}
+
+const matchesQuery = (model: PickerModel, name: string, q: string): boolean => fuzzyMatch(q, `${model.provider}/${model.id} ${name}`);
+
+/**
+ * Builds the display groups:
+ *  - management mode: provider groups only, hidden models included;
+ *  - ordinary mode: Favorites, Recent, provider groups, Hidden (last);
+ *  - search: every match once in its provider group (+ Hidden group).
+ */
+export function buildGroups(input: GroupingInput): ModelGroup[] {
+	const { ordered, query, manageMode, favoriteKeys, hiddenKeys, recentKeys, defaultKey, currentKey, maxRecents, itemOf } = input;
+	const q = query.trim().toLowerCase();
+
+	const byKey = new Map(ordered.map((m) => [keyOf(m), m]));
+	const visible = (key: string): boolean => manageMode !== null || !hiddenKeys.includes(key);
+
+	const matching = ordered.filter((m) => visible(keyOf(m)) && matchesQuery(m, m.name ?? "", q));
+	const providerGroups = new Map<string, ListItem[]>();
+	for (const model of matching) {
+		const group = providerGroups.get(model.provider) ?? [];
+		group.push(itemOf(model));
+		providerGroups.set(model.provider, group);
+	}
+	const groups: ModelGroup[] = [...providerGroups].map(([provider, items]) => ({
+		id: `provider:${provider}`,
+		title: provider,
+		items,
+		collapsible: true,
+	}));
+
+	if (manageMode) return groups;
+
+	const hidden = hiddenKeys
+		.map((key) => byKey.get(key))
+		.filter((m): m is PickerModel => !!m)
+		.filter((m) => matchesQuery(m, m.name ?? "", q));
+	const hiddenGroup: ModelGroup[] =
+		hidden.length > 0 ? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true }] : [];
+
+	if (q) return [...groups, ...hiddenGroup];
+
+	const favorites = favoriteKeys
+		.filter((key) => visible(key))
+		.map((key) => byKey.get(key))
+		.filter((m): m is PickerModel => !!m);
+	const favoriteGroup: ModelGroup[] =
+		favorites.length > 0 ? [{ id: "favorites", title: "Favorites", items: favorites.map(itemOf), collapsible: true }] : [];
+
+	const preferredKeys = [defaultKey, currentKey, ...recentKeys].filter((key, index, keys) => !!key && visible(key) && keys.indexOf(key) === index);
+	const recentModels = preferredKeys
+		.map((key) => byKey.get(key))
+		.filter((m): m is PickerModel => !!m)
+		.slice(0, Math.max(0, maxRecents));
+	const recentGroup: ModelGroup[] =
+		recentModels.length > 0 ? [{ id: "recent", title: "Recent", items: recentModels.map(itemOf), collapsible: true }] : [];
+
+	return [...favoriteGroup, ...recentGroup, ...groups, ...hiddenGroup];
+}
+
+export interface ListTheme {
+	selectedText: (text: string) => string;
+	description: (text: string) => string;
+	scrollInfo: (text: string) => string;
+	noMatch: (text: string) => string;
+	heading: (text: string) => string;
+}
+
+const matchesCancel = (data: string): boolean => matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "\x03";
+
+type Row = { kind: "header"; group: ModelGroup } | { kind: "item"; item: ListItem; group: ModelGroup };
+
+/**
+ * Grouped model list with a single ordered row model: every group header and
+ * every item is a navigable row, so Up/Down always moves to the visually
+ * adjacent row — no focus traps, no teleporting collapsed groups.
+ *
+ * Rendering is budgeted in rendered lines (selected rows may span several),
+ * and everything is scrolled through one viewport window.
+ */
+export class GroupedModelList {
+	public onSelect?: (item: ListItem) => void;
+	public onCancel?: () => void;
+	public onSelectionChange?: (item: ListItem | null) => void;
+	public onSaveDefault?: (item: ListItem) => void;
+	public onToggleFavorite?: (item: ListItem) => void;
+	public onToggleHidden?: (item: ListItem) => void;
+	public onStateChange?: () => void;
+
+	private index = 0;
+	private readonly collapsed = new Set<string>();
+
+	private readonly groups: ModelGroup[];
+	private readonly maxLines: () => number;
+	private readonly theme: ListTheme;
+
+	constructor(groups: ModelGroup[], maxLines: () => number, theme: ListTheme) {
+		this.groups = groups;
+		this.maxLines = maxLines;
+		this.theme = theme;
+	}
+
+	private get rows(): Row[] {
+		return this.groups.flatMap((group) => {
+			const header: Row = { kind: "header", group };
+			if (!group.collapsible || !this.collapsed.has(group.id)) {
+				return [header, ...group.items.map((item): Row => ({ kind: "item", item, group }))];
+			}
+			return [header];
+		});
+	}
+
+	private rowItemNumber(row: Row | undefined): { position: number; total: number } {
+		const rows = this.rows;
+		const rowIndex = row ? rows.indexOf(row) : -1;
+		let position = 0;
+		let total = 0;
+		rows.forEach((candidate, i) => {
+			if (candidate.kind !== "item") return;
+			total++;
+			if (i <= rowIndex) position = total;
+		});
+		return { position, total };
+	}
+
+	private notifySelection(): void {
+		const row = this.rows[this.index];
+		this.onSelectionChange?.(row?.kind === "item" ? row.item : null);
+	}
+
+	setSelectedValue(value: string): void {
+		const index = this.rows.findIndex((row) => row.kind === "item" && row.item.value === value);
+		if (index >= 0) this.index = index;
+	}
+
+	getSelectedItem(): ListItem | null {
+		const row = this.rows[this.index];
+		return row?.kind === "item" ? row.item : null;
+	}
+
+	isGroupFocused(): boolean {
+		return this.rows[this.index]?.kind === "header";
+	}
+
+	positionLabel(): string {
+		const { position, total } = this.rowItemNumber(this.rows[this.index]);
+		return `${position}/${total}`;
+	}
+
+	allGroupsCollapsed(): boolean {
+		const collapsible = this.groups.filter((group) => group.collapsible);
+		return collapsible.length > 0 && collapsible.every((group) => this.collapsed.has(group.id));
+	}
+
+	private toggleGroup(group: ModelGroup): void {
+		if (!group.collapsible) return;
+		if (this.collapsed.has(group.id)) this.collapsed.delete(group.id);
+		else this.collapsed.add(group.id);
+		// Keep the cursor on the group's header row across the toggle.
+		const rows = this.rows;
+		const headerRow = rows.find((row) => row.kind === "header" && row.group.id === group.id);
+		this.index = headerRow ? rows.indexOf(headerRow) : Math.min(this.index, rows.length - 1);
+		this.notifySelection();
+		this.onStateChange?.();
+	}
+
+	handleInput(data: string): void {
+		const rows = this.rows;
+		if (rows.length === 0) {
+			if (matchesCancel(data)) this.onCancel?.();
+			return;
+		}
+		if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
+			const direction = matchesKey(data, Key.up) ? -1 : 1;
+			this.index = (this.index + direction + rows.length) % rows.length;
+			this.notifySelection();
+			this.onStateChange?.();
+			return;
+		}
+		if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+			const row = rows[this.index]!;
+			const group = row.kind === "header" ? row.group : row.group;
+			if (group.collapsible && matchesKey(data, Key.left) && !this.collapsed.has(group.id)) {
+				this.toggleGroup(group);
+			} else if (group.collapsible && matchesKey(data, Key.right) && this.collapsed.has(group.id)) {
+				this.toggleGroup(group);
+				// After expanding, land on the group's first item.
+				const after = this.rows;
+				const firstItem = after.find((candidate) => candidate.kind === "item" && candidate.group.id === group.id);
+				if (firstItem) {
+					this.index = after.indexOf(firstItem);
+					this.notifySelection();
+					this.onStateChange?.();
+				}
+			}
+			return;
+		}
+		if (matchesKey(data, Key.ctrl("g"))) {
+			const shouldExpand = this.allGroupsCollapsed();
+			for (const group of this.groups) if (group.collapsible) shouldExpand ? this.collapsed.delete(group.id) : this.collapsed.add(group.id);
+			const after = this.rows;
+			// After collapsing all, move the cursor to the nearest header.
+			if (!shouldExpand) {
+				const current = after[Math.min(this.index, after.length - 1)];
+				const target = current?.kind === "header" ? current : after.find((candidate) => candidate.kind === "header");
+				this.index = target ? after.indexOf(target) : 0;
+			} else {
+				this.index = Math.min(this.index, after.length - 1);
+			}
+			this.notifySelection();
+			this.onStateChange?.();
+			return;
+		}
+		if (matchesKey(data, Key.ctrl("h"))) {
+			const item = this.getSelectedItem();
+			if (item) this.onToggleHidden?.(item);
+		} else if (matchesKey(data, Key.ctrl("f"))) {
+			const item = this.getSelectedItem();
+			if (item) this.onToggleFavorite?.(item);
+		} else if (matchesKey(data, Key.ctrl("s"))) {
+			const item = this.getSelectedItem();
+			if (item) this.onSaveDefault?.(item);
+		} else if (matchesKey(data, Key.enter)) {
+			const row = this.rows[this.index]!;
+			if (row.kind === "header") {
+				this.toggleGroup(row.group);
+			} else {
+				this.onSelect?.(row.item);
+			}
+		} else if (matchesCancel(data)) {
+			this.onCancel?.();
+		}
+	}
+
+	render(width: number): string[] {
+		const rows = this.rows;
+		if (rows.length === 0) return [this.theme.noMatch("  No matches")];
+
+		const rendered = rows.map((row) => this.renderRow(row, width));
+		const fits = (budget: number): { start: number; end: number } => {
+			let used = rendered[this.index]!.length;
+			let start = this.index;
+			let end = this.index + 1;
+			while (start > 0 && used + rendered[start - 1]!.length <= budget) {
+				start--;
+				used += rendered[start]!.length;
+			}
+			while (end < rows.length && used + rendered[end]!.length <= budget) {
+				used += rendered[end]!.length;
+				end++;
+			}
+			return { start, end };
+		};
+
+		const budget = Math.max(1, this.maxLines());
+		let { start, end } = fits(budget);
+		const truncated = start > 0 || end < rows.length;
+		if (truncated) ({ start, end } = fits(budget - 1));
+
+		const lines: string[] = [];
+		for (let i = start; i < end; i++) lines.push(...rendered[i]!);
+		if (truncated) {
+			const hidden = rows.length - (end - start);
+			lines.push(this.theme.scrollInfo(`  … ${hidden} more (↑↓ to scroll)`));
+		}
+		return lines;
+	}
+
+	private renderRow(row: Row, width: number): string[] {
+		if (row.kind === "header") {
+			const collapsed = row.group.collapsible && this.collapsed.has(row.group.id);
+			const marker = row.group.collapsible ? (collapsed ? "▸" : "▾") : " ";
+			const label = `${marker} ${row.group.title}`;
+			return [this.isGroupFocused() ? this.theme.selectedText(`→ ${label}`) : this.theme.heading(`  ${label}`)];
+		}
+		return this.renderItem(row.item, width);
+	}
+
+	private renderItem(item: ListItem, width: number): string[] {
+		const selected = this.rows[this.index]?.kind === "item" && this.rows[this.index]!.item === item;
+		const prefix = width >= 2 ? `${selected ? "→ " : "  "}` : "";
+		const labelWidth = Math.max(1, width - prefix.length);
+		const hasDefaultMarker = item.label.startsWith("[default] ");
+		const labelText = hasDefaultMarker ? item.label.slice("[default] ".length) : item.label;
+		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
+		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${modelLabel}` : modelLabel;
+
+		const description = item.description ? `  ${item.description}` : "";
+		if (!(selected && item.inlineDetails?.length) && visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
+			return [`${prefix}${label}${this.theme.description(description)}`];
+		}
+
+		const lines: string[] = [];
+		const labelLines = wrapTextWithAnsi(label, labelWidth);
+		lines.push(...labelLines.map((line, lineIndex) => `${lineIndex === 0 ? prefix : " ".repeat(prefix.length)}${line}`));
+		if (selected && item.inlineDetails?.length) {
+			const indent = "        ";
+			const detailWidth = Math.max(1, width - indent.length);
+			for (const detail of item.inlineDetails) {
+				lines.push(...wrapTextWithAnsi(this.theme.description(detail), detailWidth).map((line) => `${indent}${line}`));
+			}
+		} else if (item.description) {
+			const indent = " ".repeat(Math.min(4, Math.max(0, width - 1)));
+			const descriptionLines = wrapTextWithAnsi(this.theme.description(item.description), Math.max(1, width - indent.length));
+			lines.push(...descriptionLines.map((line) => `${indent}${line}`));
+		}
+		return lines;
+	}
+}
