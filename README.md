@@ -128,8 +128,8 @@ Press `Ctrl+O` to open Settings:
 
 - Show picker on application startup
 - Show picker on new session
-- Manage Favorites
-- Manage Hidden models
+- Manage Favorites (`Ctrl+F` in the main picker)
+- Manage Hidden models (`Ctrl+H` in the main picker)
 
 The management screens display provider groups with `[ ]` and `[x]` checkboxes.
 Press `Enter` to toggle an entry without closing the screen. These screens do

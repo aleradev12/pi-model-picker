@@ -339,8 +339,8 @@ function pickModel(
 						theme.fg("accent", theme.bold("Settings")),
 						row(0, reasons.includes("startup"), "Show picker on application startup"),
 						row(1, reasons.includes("new"), "Show picker on new session"),
-						row(2, false, "Manage Favorites"),
-						row(3, false, "Manage Hidden models"),
+						row(2, false, "Manage Favorites (Ctrl+F in picker)"),
+						row(3, false, "Manage Hidden models (Ctrl+H in picker)"),
 						theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
 					];
 				} else if (manageMode) {
