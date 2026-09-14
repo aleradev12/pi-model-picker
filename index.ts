@@ -1,429 +1,42 @@
 /**
- * new-model-picker — пикер модели после /new
+ * new-model-picker — model picker after /new, on startup, and via /model-picker.
  *
- * В отличие от pi-startup-picker (работает только на обычном старте), этот
- * экстеншен показывает поиск + выбор модели на session_start с reason "new"
- * (т.е. сразу после /new), а также по команде /model-picker.
+ * Behavior:
+ *  - Grouped list (Favorites / Recent / providers / Hidden) with collapsible
+ *    provider headers; every header and model is reachable with ↑/↓.
+ *  - Typing filters (fuzzy over provider/id/name); ←/→ collapse/expand groups.
+ *  - Selected model shows wrapped inline details; the title owns the count.
+ *  - Ctrl+O opens settings (startup/new toggles + Favorites/Hidden management);
+ *    management modes show provider groups only, Enter toggles, Esc goes back.
+ *  - Esc cancels; a pick is applied via pi.setModel() and stored in recents.
  *
- * Поведение:
- *  - Недавние модели (последние выборы) показываются сверху списка.
- *  - Ввод фильтрует список (нечёткий поиск по provider/id/name).
- *  - Esc — отмена, остаётся текущая модель.
- *  - Выбор сохраняется в недавние и применяется через pi.setModel().
+ * Config ~/.pi/agent/new-model-picker.json (optional):
+ *   { "reasons": ["startup", "new"], "maxRecents": 5 }
  *
- * Конфиг ~/.pi/agent/new-model-picker.json (необязателен):
- * {
- *   "reasons": ["new"],   // когда показывать: "startup" | "new" | "resume" | "fork"
- *   "maxRecents": 5       // сколько недавних моделей показывать сверху
- * }
- *
- * Недавние хранятся в ~/.pi/agent/new-model-picker-recents.json
+ * State files: ~/.pi/agent/new-model-picker-{recents,favorites,hidden}.json
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Container, Input, Key, matchesKey, type SelectItem, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+	buildGroups,
+	createStore,
+	GroupedModelList,
+	isValidReason,
+	Key,
+	keyOf,
+	matchesKey,
+	type ListItem,
+	type ListTheme,
+	type ManageMode,
+} from "./core.ts";
+import { Container, Input, Text, visibleWidth } from "@earendil-works/pi-tui";
 
-interface PickerConfig {
-	reasons: string[];
-	maxRecents: number;
-}
-
-interface RecentEntry {
-	provider: string;
-	id: string;
-}
-
-interface AgentSettings {
-	defaultProvider?: unknown;
-	defaultModel?: unknown;
-	defaultThinkingLevel?: unknown;
-}
-
-const VALID_REASONS = new Set(["startup", "new", "resume", "fork"]);
 const AUTOCOMPLETE_UI_MARKER = Symbol.for("new-model-picker.autocomplete-installed");
+const store = createStore(getAgentDir());
 
-const keyOf = (m: Model<Api>): string => `${m.provider}/${m.id}`;
-
-function configPath(): string {
-	return join(getAgentDir(), "new-model-picker.json");
-}
-
-function recentsPath(): string {
-	return join(getAgentDir(), "new-model-picker-recents.json");
-}
-
-function favoritesPath(): string {
-	return join(getAgentDir(), "new-model-picker-favorites.json");
-}
-
-function hiddenPath(): string {
-	return join(getAgentDir(), "new-model-picker-hidden.json");
-}
-
-function settingsPath(): string {
-	return join(getAgentDir(), "settings.json");
-}
-
-/** Модель, заданная в настройках pi для новых сессий. */
-function getConfiguredDefaultKey(available: Model<Api>[]): string {
-	try {
-		const settings = JSON.parse(readFileSync(settingsPath(), "utf8")) as AgentSettings;
-		if (typeof settings.defaultProvider !== "string" || typeof settings.defaultModel !== "string") {
-			return "";
-		}
-
-		const model = available.find(
-			(m) =>
-				m.provider === settings.defaultProvider &&
-				(m.id === settings.defaultModel || m.name === settings.defaultModel),
-		);
-		return model ? keyOf(model) : "";
-	} catch {
-		return "";
-	}
-}
-
-function getConfiguredDefaultThinkingLevel(): string {
-	try {
-		const settings = JSON.parse(readFileSync(settingsPath(), "utf8")) as AgentSettings;
-		return typeof settings.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : "";
-	} catch {
-		return "";
-	}
-}
-
-function saveConfiguredDefault(model: Model<Api>): boolean {
-	try {
-		const raw: Record<string, unknown> = JSON.parse(readFileSync(settingsPath(), "utf8"));
-		writeFileSync(
-			settingsPath(),
-			`${JSON.stringify({ ...raw, defaultProvider: model.provider, defaultModel: model.name || model.id }, null, 2)}\n`,
-		);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function loadConfig(): PickerConfig {
-	const defaults: PickerConfig = { reasons: ["startup", "new"], maxRecents: 5 };
-	try {
-		const raw = JSON.parse(readFileSync(configPath(), "utf8")) as Partial<PickerConfig>;
-		return {
-			reasons: Array.isArray(raw.reasons)
-				? raw.reasons.filter((r): r is string => typeof r === "string" && VALID_REASONS.has(r))
-				: defaults.reasons,
-			maxRecents:
-				typeof raw.maxRecents === "number"
-					? Math.max(0, Math.min(20, Math.floor(raw.maxRecents)))
-					: defaults.maxRecents,
-		};
-	} catch {
-		return defaults;
-	}
-}
-
-function saveConfig(config: PickerConfig): boolean {
-	try {
-		writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function loadRecents(): RecentEntry[] {
-	try {
-		const raw: unknown = JSON.parse(readFileSync(recentsPath(), "utf8"));
-		if (!Array.isArray(raw)) return [];
-		return raw.filter(
-			(e): e is RecentEntry =>
-				!!e &&
-				typeof e === "object" &&
-				typeof (e as RecentEntry).provider === "string" &&
-				typeof (e as RecentEntry).id === "string",
-		);
-	} catch {
-		return [];
-	}
-}
-
-function saveEntries(path: string, entries: RecentEntry[]): void {
-	try {
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify(entries.slice(0, 15), null, "\t"));
-	} catch {
-		// Optional picker state must never block model selection.
-	}
-}
-
-function saveRecents(entries: RecentEntry[]): void {
-	saveEntries(recentsPath(), entries);
-}
-
-function loadFavorites(): RecentEntry[] {
-	try {
-		const raw: unknown = JSON.parse(readFileSync(favoritesPath(), "utf8"));
-		return Array.isArray(raw)
-			? raw.filter(
-				(e): e is RecentEntry =>
-					!!e && typeof e === "object" && typeof (e as RecentEntry).provider === "string" && typeof (e as RecentEntry).id === "string",
-			)
-			: [];
-	} catch {
-		return [];
-	}
-}
-
-function saveFavorites(entries: RecentEntry[]): void {
-	saveEntries(favoritesPath(), entries);
-}
-
-function loadHidden(): RecentEntry[] {
-	try {
-		const raw: unknown = JSON.parse(readFileSync(hiddenPath(), "utf8"));
-		return Array.isArray(raw)
-			? raw.filter((e): e is RecentEntry => !!e && typeof e === "object" && typeof (e as RecentEntry).provider === "string" && typeof (e as RecentEntry).id === "string")
-			: [];
-	} catch {
-		return [];
-	}
-}
-
-function saveHidden(entries: RecentEntry[]): void {
-	saveEntries(hiddenPath(), entries);
-}
-
-/** Нечёткое совпадение: все символы query встречаются в target по порядку. */
-function fuzzyMatch(query: string, target: string): boolean {
-	if (!query) return true;
-	let i = 0;
-	const t = target.toLowerCase();
-	for (const ch of t) {
-		if (ch === query[i]) i++;
-		if (i >= query.length) return true;
-	}
-	return i >= query.length;
-}
-
-interface ModelListTheme {
-	selectedText: (text: string) => string;
-	description: (text: string) => string;
-	scrollInfo: (text: string) => string;
-	noMatch: (text: string) => string;
-	heading: (text: string) => string;
-}
-
-interface ModelGroup {
-	id: string;
-	title: string;
-	items: SelectItem[];
-	collapsible: boolean;
-}
-
-interface GroupedItem {
-	item: SelectItem;
-	group: ModelGroup;
-}
-
-/** Model selector with wrapped rows and non-selectable collapsible provider headings. */
-class GroupedModelList {
-	public onSelect?: (item: SelectItem) => void;
-	public onCancel?: () => void;
-	public onSelectionChange?: (item: SelectItem) => void;
-	public onSaveDefault?: (item: SelectItem) => void;
-	public onToggleFavorite?: (item: SelectItem) => void;
-	public onToggleHidden?: (item: SelectItem) => void;
-	public onStateChange?: () => void;
-	private selectedIndex = 0;
-	private focusedGroupId?: string;
-	private readonly collapsed = new Set<string>();
-
-	constructor(
-		private readonly groups: ModelGroup[],
-		private readonly maxVisible: () => number,
-		private readonly theme: ModelListTheme,
-		private readonly searching: boolean,
-	) {}
-
-	private get visibleItems(): GroupedItem[] {
-		return this.groups.flatMap((group) =>
-			!this.collapsed.has(group.id) ? group.items.map((item) => ({ item, group })) : [],
-		);
-	}
-
-	setSelectedValue(value: string): void {
-		const index = this.visibleItems.findIndex(({ item }) => item.value === value);
-		if (index >= 0) this.selectedIndex = index;
-	}
-
-	getSelectedItem(): SelectItem | null {
-		return this.focusedGroupId ? null : this.visibleItems[this.selectedIndex]?.item ?? null;
-	}
-
-	isGroupFocused(): boolean {
-		return !!this.focusedGroupId;
-	}
-
-	positionLabel(): string {
-		const visible = this.visibleItems;
-		return visible.length > 0 ? `${this.selectedIndex + 1}/${visible.length}` : "0/0";
-	}
-
-	allGroupsCollapsed(): boolean {
-		const collapsible = this.groups.filter((group) => group.collapsible);
-		return collapsible.length > 0 && collapsible.every((group) => this.collapsed.has(group.id));
-	}
-
-	invalidate(): void {}
-
-	render(width: number): string[] {
-		const visible = this.visibleItems;
-		const collapsedHeaders = this.groups
-			.filter((group) => group.collapsible && this.collapsed.has(group.id))
-			.map((group) =>
-				group.id === this.focusedGroupId
-					? this.theme.selectedText(`→ ▸ ${group.title}`)
-					: this.theme.heading(`  ▸ ${group.title}`),
-			);
-		if (visible.length === 0) return collapsedHeaders.length > 0 ? collapsedHeaders : [this.theme.noMatch("  No matches")];
-		const maxVisible = this.maxVisible();
-		const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(maxVisible / 2), visible.length - maxVisible));
-		const end = Math.min(start + maxVisible, visible.length);
-		const lines: string[] = [...collapsedHeaders];
-		let previousGroupId: string | undefined;
-
-		for (let i = start; i < end; i++) {
-			const entry = visible[i]!;
-			if (entry.group.id !== previousGroupId) {
-				const marker = entry.group.collapsible ? "▾ " : "";
-				lines.push(this.theme.heading(`${marker}${entry.group.title}`));
-				previousGroupId = entry.group.id;
-			}
-			this.renderItem(lines, entry.item, !this.focusedGroupId && i === this.selectedIndex, width, entry.group.collapsible);
-		}
-
-		if (start > 0 || end < visible.length) lines.push(this.theme.scrollInfo(`  (${this.selectedIndex + 1}/${visible.length})`));
-		return lines;
-	}
-
-	private renderItem(lines: string[], item: SelectItem, selected: boolean, width: number, nested = false): void {
-		const groupIndent = nested ? "  " : "";
-		const prefix = width >= 2 ? `${groupIndent}${selected ? "→ " : "  "}` : "";
-		const labelWidth = Math.max(1, width - prefix.length);
-		const hasDefaultMarker = item.label.startsWith("[default] ");
-		const labelText = hasDefaultMarker ? item.label.slice("[default] ".length) : item.label;
-		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
-		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${modelLabel}` : modelLabel;
-		const inlineDetails = (item as SelectItem & { inlineDetails?: string[] }).inlineDetails;
-		if (selected && inlineDetails) {
-			lines.push(`${prefix}${label}`);
-			lines.push(...inlineDetails.map((line) => this.theme.description(`│       ${line}`)));
-			return;
-		}
-		const description = item.description ? `  ${item.description}` : "";
-		if (visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
-			lines.push(`${prefix}${label}${this.theme.description(description)}`);
-			return;
-		}
-		const labelLines = wrapTextWithAnsi(label, labelWidth);
-		lines.push(...labelLines.map((line, lineIndex) => `${lineIndex === 0 ? prefix : " ".repeat(prefix.length)}${line}`));
-		if (item.description) {
-			const indent = " ".repeat(Math.min(4, Math.max(0, width - 1)));
-			const descriptionLines = wrapTextWithAnsi(this.theme.description(item.description), Math.max(1, width - indent.length));
-			lines.push(...descriptionLines.map((line) => `${indent}${line}`));
-		}
-	}
-
-	handleInput(data: string): void {
-		const visible = this.visibleItems;
-		if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
-			if (visible.length === 0 && !this.focusedGroupId) return;
-			if (this.focusedGroupId) {
-				const direction = matchesKey(data, Key.up) ? -1 : 1;
-				if (visible.length > 0) {
-					this.focusedGroupId = undefined;
-					this.selectedIndex = direction > 0 ? 0 : visible.length - 1;
-					this.onSelectionChange?.(visible[this.selectedIndex]!.item);
-				}
-				this.onStateChange?.();
-				return;
-			}
-			const direction = matchesKey(data, Key.up) ? -1 : 1;
-			const collapsedGroups = this.groups.filter((group) => this.collapsed.has(group.id));
-			if (collapsedGroups.length > 0 && ((direction < 0 && this.selectedIndex === 0) || (direction > 0 && this.selectedIndex === visible.length - 1))) {
-				this.focusedGroupId = direction < 0 ? collapsedGroups[collapsedGroups.length - 1]!.id : collapsedGroups[0]!.id;
-				this.onStateChange?.();
-				return;
-			}
-			this.selectedIndex = (this.selectedIndex + direction + visible.length) % visible.length;
-			this.onSelectionChange?.(visible[this.selectedIndex]!.item);
-			return;
-		}
-		if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-			const focusedGroup = this.groups.find((group) => group.id === this.focusedGroupId);
-			if (focusedGroup && this.collapsed.has(focusedGroup.id)) {
-				if (matchesKey(data, Key.right)) {
-					this.collapsed.delete(focusedGroup.id);
-					this.focusedGroupId = undefined;
-					this.selectedIndex = Math.max(0, this.visibleItems.findIndex((entry) => entry.group.id === focusedGroup.id));
-					const selected = this.visibleItems[this.selectedIndex];
-					if (selected) this.onSelectionChange?.(selected.item);
-					this.onStateChange?.();
-				}
-				return;
-			}
-			const group = visible[this.selectedIndex]?.group;
-			if (group?.collapsible) {
-				if (matchesKey(data, Key.left)) {
-					this.collapsed.add(group.id);
-					this.focusedGroupId = group.id;
-					const groupIndex = this.groups.indexOf(group);
-					const nextGroup = this.groups.slice(groupIndex + 1).find((candidate) => !this.collapsed.has(candidate.id) && candidate.items.length > 0);
-					this.selectedIndex = nextGroup ? this.visibleItems.findIndex((entry) => entry.group.id === nextGroup.id) : 0;
-				} else {
-					this.collapsed.delete(group.id);
-					this.focusedGroupId = undefined;
-					this.selectedIndex = this.visibleItems.findIndex((entry) => entry.group.id === group.id);
-				}
-				const selected = this.visibleItems[this.selectedIndex];
-				if (selected) this.onSelectionChange?.(selected.item);
-				this.onStateChange?.();
-			}
-			return;
-		}
-		if (matchesKey(data, Key.ctrl("g"))) {
-			const collapsible = this.groups.filter((group) => group.collapsible);
-			const shouldExpand = this.allGroupsCollapsed();
-			for (const group of collapsible) shouldExpand ? this.collapsed.delete(group.id) : this.collapsed.add(group.id);
-			this.focusedGroupId = shouldExpand ? undefined : collapsible[0]?.id;
-			this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, this.visibleItems.length - 1));
-			const selected = this.visibleItems[this.selectedIndex];
-			if (selected) this.onSelectionChange?.(selected.item);
-			this.onStateChange?.();
-			return;
-		}
-		if (matchesKey(data, Key.ctrl("h"))) {
-			const item = this.getSelectedItem();
-			if (item) this.onToggleHidden?.(item);
-		} else if (matchesKey(data, Key.ctrl("f"))) {
-			const item = this.getSelectedItem();
-			if (item) this.onToggleFavorite?.(item);
-		} else if (matchesKey(data, Key.ctrl("s"))) {
-			const item = this.getSelectedItem();
-			if (item) this.onSaveDefault?.(item);
-		} else if (matchesKey(data, Key.enter)) {
-			const item = this.getSelectedItem();
-			if (item) this.onSelect?.(item);
-		} else if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-			this.onCancel?.();
-		}
-	}
-}
+type PickerConfig = ReturnType<typeof store.loadConfig>;
 
 function pickModel(
 	pi: ExtensionAPI,
@@ -431,7 +44,7 @@ function pickModel(
 	config: PickerConfig,
 	includeCurrentInRecents = false,
 ): Promise<void> {
-	// Пикер — TUI-only фича
+	// The picker is a TUI-only feature.
 	if (!ctx.hasUI || ctx.mode !== "tui") return Promise.resolve();
 
 	const available = ctx.modelRegistry.getAvailable();
@@ -442,31 +55,23 @@ function pickModel(
 
 	const current = ctx.model;
 	const currentKey = current ? keyOf(current) : "";
-	// Не полагаемся только на ctx.model: после /new он может отличаться от
-	// настройки по умолчанию, а Enter должен выбирать именно defaultModel.
-	const configuredDefaultKey = getConfiguredDefaultKey(available);
+	// Don't rely on ctx.model alone: after /new it may differ from the
+	// configured default, and Enter must confirm exactly defaultModel.
+	const configuredDefaultKey = store.getConfiguredDefaultKey(available);
 	let defaultKey = configuredDefaultKey || currentKey;
-	const defaultThinkingLevel = getConfiguredDefaultThinkingLevel() || ctx.thinkingLevel;
+	const defaultThinkingLevel = store.getConfiguredDefaultThinkingLevel() || ctx.thinkingLevel;
 
-	// Недавние: только те, что ещё существуют в реестре, без дублей
-	const seen = new Set<string>();
-	const entryKey = (e: RecentEntry): string => `${e.provider}/${e.id}`;
-	const recentKeys = loadRecents()
-		.map(entryKey)
-		.filter((k) => {
-			if (seen.has(k) || !available.some((m) => keyOf(m) === k)) return false;
-			seen.add(k);
-			return true;
-		})
-		.slice(0, config.maxRecents);
-	const recentSet = new Set(recentKeys);
-	let favoriteKeys = loadFavorites()
-		.map(entryKey)
-		.filter((key, index, keys) => keys.indexOf(key) === index && available.some((model) => keyOf(model) === key));
-	let hiddenKeys = loadHidden()
-		.map(entryKey)
-		.filter((key, index, keys) => keys.indexOf(key) === index && available.some((model) => keyOf(model) === key));
-	let manageMode: "favorites" | "hidden" | null = null;
+	const entryKey = (e: { provider: string; id: string }): string => `${e.provider}/${e.id}`;
+	const dedupeKnown = (entries: { provider: string; id: string }[]): string[] => {
+		const seen = new Set<string>();
+		return entries
+			.map(entryKey)
+			.filter((key) => !seen.has(key) && available.some((m) => keyOf(m) === key) && seen.add(key) !== undefined);
+	};
+	let recentKeys = dedupeKnown(store.loadRecents()).slice(0, config.maxRecents);
+	let favoriteKeys = dedupeKnown(store.loadFavorites());
+	let hiddenKeys = dedupeKnown(store.loadHidden());
+	let manageMode: ManageMode = null;
 
 	const byKey = new Map(available.map((model) => [keyOf(model), model]));
 	const ordered = [...available].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
@@ -492,7 +97,7 @@ function pickModel(
 		return text;
 	};
 
-	const itemOf = (model: Model<Api>): SelectItem => ({
+	const itemOf = (model: Model<Api>): ListItem => ({
 		value: keyOf(model),
 		label: labelOf(model),
 		description: descriptionOf(model),
@@ -500,44 +105,21 @@ function pickModel(
 			`${model.provider} · ${formatContext(model.contextWindow)} · ${model.reasoning ? `reasoning: available · default: ${defaultThinkingLevel}` : "reasoning: unavailable"}`,
 			`↑ Read: ${formatNumber(model.cost.input)}$   ↓ Write: ${formatNumber(model.cost.output)}$   Cache: ${formatNumber(model.cost.cacheRead)}$ / 1M tokens`,
 		],
-	} as SelectItem & { inlineDetails: string[] });
+	});
 
-	const groupsFor = (query: string): ModelGroup[] => {
-		const q = query.trim().toLowerCase();
-		const matching = ordered.filter((model) => (manageMode || !hiddenKeys.includes(keyOf(model))) && fuzzyMatch(q, `${keyOf(model)} ${model.name ?? ""}`));
-		const providerGroups = new Map<string, SelectItem[]>();
-		for (const model of matching) {
-			const group = providerGroups.get(model.provider) ?? [];
-			group.push(itemOf(model));
-			providerGroups.set(model.provider, group);
-		}
-		const groups = [...providerGroups].map(([provider, items]) => ({
-			id: `provider:${provider}`,
-			title: provider,
-			items,
-			collapsible: true,
-		}));
-
-		// During search, show each match exactly once in its provider group.
-		if (manageMode) return groups;
-		const hidden = hiddenKeys.map((key) => byKey.get(key)).filter((model): model is Model<Api> => !!model)
-			.filter((model) => fuzzyMatch(q, `${keyOf(model)} ${model.name ?? ""}`));
-		const hiddenGroup = hidden.length > 0 ? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true }] : [];
-		if (q) return [...groups, ...hiddenGroup];
-		const favorites = favoriteKeys
-			.filter((key) => !hiddenKeys.includes(key))
-			.map((key) => byKey.get(key))
-			.filter((model): model is Model<Api> => !!model);
-		const favoriteGroup = favorites.length > 0 ? [{ id: "favorites", title: "Favorites", items: favorites.map(itemOf), collapsible: true }] : [];
-		const preferredKeys = [defaultKey, ...(includeCurrentInRecents ? [currentKey] : []), ...recentKeys];
-		const recentModels = preferredKeys
-			.filter((key, index) => !!key && !hiddenKeys.includes(key) && preferredKeys.indexOf(key) === index)
-			.map((key) => byKey.get(key))
-			.filter((model): model is Model<Api> => !!model)
-			.slice(0, config.maxRecents);
-		const recentGroup = recentModels.length > 0 ? [{ id: "recent", title: "Recent", items: recentModels.map(itemOf), collapsible: true }] : [];
-		return [...favoriteGroup, ...recentGroup, ...groups, ...hiddenGroup];
-	};
+	const groupsFor = (query: string) =>
+		buildGroups({
+			ordered,
+			query,
+			manageMode,
+			favoriteKeys,
+			hiddenKeys,
+			recentKeys,
+			defaultKey,
+			currentKey: includeCurrentInRecents ? currentKey : "",
+			maxRecents: config.maxRecents,
+			itemOf,
+		});
 
 	return ctx.ui.custom<Model<Api> | null>((tui, theme, _kb, done) => {
 		const container = new Container();
@@ -545,11 +127,9 @@ function pickModel(
 		const title = new Text(theme.fg("accent", theme.bold("Pick a model")));
 		const search = new Input({ placeholder: "Filter (provider / model / name)…" });
 		const listSlot = new Container();
-		const details = new Text("");
 		const help = new Text("");
 
-
-		const listTheme = {
+		const listTheme: ListTheme = {
 			selectedText: (t: string) => theme.fg("accent", t),
 			description: (t: string) => theme.fg("muted", t),
 			scrollInfo: (t: string) => theme.fg("dim", t),
@@ -557,85 +137,81 @@ function pickModel(
 			heading: (t: string) => theme.fg("accent", theme.bold(t)),
 		};
 
-		const updateDetails = (item: SelectItem | null) => {
-			const model = item ? byKey.get(item.value) : undefined;
-			if (!model) {
-				details.setText("");
+		let uiMode: "pick" | "settings" = "pick";
+		let settingsIndex = 0;
+		let selectedValue = "";
+		let selectList: GroupedModelList;
+
+		const updateChrome = () => {
+			if (uiMode === "settings") {
+				title.setText(theme.fg("accent", theme.bold("Settings")));
+				help.setText(theme.fg("dim", "↑↓ select | enter toggle/open | ctrl+c quit | esc back"));
 				return;
 			}
-			const displayName = model.name && model.name !== model.id ? `\n  ${model.name}` : "";
-			const reasoning = model.reasoning
-				? `reasoning: available · default: ${defaultThinkingLevel}`
-				: "reasoning: unavailable";
-			const pricing = `↑Read: ${formatNumber(model.cost.input)}$  ↓Write: ${formatNumber(model.cost.output)}$  Cache: ${formatNumber(model.cost.cacheRead)}$ per 1M tokens`;
-			details.setText(theme.fg("dim", `  ${keyOf(model)}${displayName}\n  ${formatContext(model.contextWindow)} · ${reasoning}\n  ${pricing}`));
-		};
-
-		const toggleAutostart = (reason: "startup" | "new") => {
-			const nextConfig = loadConfig();
-			const enabled = nextConfig.reasons.includes(reason);
-			nextConfig.reasons = enabled
-				? nextConfig.reasons.filter((value) => value !== reason)
-				: [...new Set([...nextConfig.reasons, reason])];
-			if (saveConfig(nextConfig)) ctx.ui.notify(`Picker on ${reason}: ${enabled ? "off" : "on"}`, "info");
-			else ctx.ui.notify("new-model-picker: could not save configuration", "error");
-		};
-
-		const updateHelp = (list: GroupedModelList) => {
-			const groupAction = list.isGroupFocused()
-				? "←→ show group"
-				: "←→ collapse group";
-			const allAction = list.allGroupsCollapsed() ? "ctrl+g show all groups" : "ctrl+g collapse all groups";
-			help.setText(theme.fg("dim", `↑↓ select | enter apply | ctrl+s set default | ctrl+o settings | esc cancel\n${groupAction} | ${allAction}`));
+			const heading = manageMode === "favorites" ? "Manage Favorites" : manageMode === "hidden" ? "Manage Hidden models" : "Pick a model";
+			title.setText(theme.fg("accent", theme.bold(`${heading} (${selectList.positionLabel()})`)));
+			const groupAction = selectList.isGroupFocused() ? "←→ expand group" : "←→ collapse group";
+			const manageAction = manageMode ? "enter toggle | esc back" : "";
+			help.setText(
+				theme.fg(
+					"dim",
+					`↑↓ navigate | enter ${manageMode ? "toggle" : "apply"} | ctrl+s set default | ctrl+o settings | esc cancel\n${groupAction} | ctrl+g ${selectList.allGroupsCollapsed() ? "show" : "collapse"} all${manageAction ? ` | ${manageAction}` : ""}`,
+				),
+			);
 		};
 
 		const buildList = (query: string): GroupedModelList => {
-			const groups = groupsFor(query);
 			const list = new GroupedModelList(
-				groups,
-				// On narrow terminals a wrapped model needs two rows; reserve chrome for
-				// Labels may wrap to two rows; preserve the fixed picker chrome first.
-				() => Math.max(3, Math.min(14, Math.floor(((process.stdout.rows || 24) - 30) / 2))),
+				groupsFor(query),
+				// Line budget for the list viewport; the rest of the overlay
+				// chrome (borders, title, search, help, settings) is fixed.
+				() => Math.max(6, Math.min(26, (process.stdout.rows || 24) - 12)),
 				listTheme,
-				!!query.trim(),
 			);
-			// With an empty filter, Enter always confirms defaultModel from settings.json.
-			if (!query.trim()) list.setSelectedValue(defaultKey);
-			updateDetails(list.getSelectedItem());
-			updateHelp(list);
+			// Preserve the prior selection across rebuilds; fall back to the
+			// configured default; otherwise the first row (a group header).
+			list.setSelectedValue(selectedValue || defaultKey);
+			selectedValue = list.getSelectedItem()?.value ?? selectedValue;
 			list.onSelectionChange = (item) => {
-				updateDetails(item);
-				title.setText(theme.fg("accent", theme.bold(`Pick a model (${list.positionLabel()})`)));
+				if (item) selectedValue = item.value;
+				updateChrome();
 			};
-			list.onStateChange = () => updateHelp(list);
+			list.onStateChange = updateChrome;
+			list.onSelect = (item) => {
+				if (!manageMode) return done(byKey.get(item.value) ?? null);
+				toggleEntry(item.value);
+				rebuild(search.getValue());
+			};
+			list.onCancel = () => {
+				if (manageMode) {
+					manageMode = null;
+					uiMode = "settings";
+					rebuild(search.getValue());
+				} else done(null);
+			};
 			list.onToggleHidden = (item) => {
-				if (!byKey.has(item.value)) return;
-				hiddenKeys = hiddenKeys.includes(item.value)
-					? hiddenKeys.filter((key) => key !== item.value)
-					: [item.value, ...hiddenKeys];
-				saveHidden(hiddenKeys.map((key) => {
-					const hidden = byKey.get(key)!;
-					return { provider: hidden.provider, id: hidden.id };
-				}));
-				ctx.ui.notify(hiddenKeys.includes(item.value) ? `Hidden: ${item.value}` : `Shown: ${item.value}`, "info");
+				if (!canHide(item.value)) return;
+				const hiding = !hiddenKeys.includes(item.value);
+				hiddenKeys = hiding ? [item.value, ...hiddenKeys] : hiddenKeys.filter((key) => key !== item.value);
+				if (!persistHidden()) return;
+				ctx.ui.notify(hiding ? `Hidden: ${item.value}` : `Shown: ${item.value}`, "info");
 				rebuild(search.getValue());
 			};
 			list.onToggleFavorite = (item) => {
 				const model = byKey.get(item.value);
 				if (!model) return;
-				favoriteKeys = favoriteKeys.includes(item.value)
-					? favoriteKeys.filter((key) => key !== item.value)
-					: [item.value, ...favoriteKeys];
-				saveFavorites(favoriteKeys.map((key) => {
-					const favorite = byKey.get(key)!;
-					return { provider: favorite.provider, id: favorite.id };
-				}));
-				ctx.ui.notify(favoriteKeys.includes(item.value) ? `Favorite: ${item.value}` : `Removed favorite: ${item.value}`, "info");
+				const adding = !favoriteKeys.includes(item.value);
+				favoriteKeys = adding ? [item.value, ...favoriteKeys] : favoriteKeys.filter((key) => key !== item.value);
+				if (!store.saveFavorites(favoriteKeys.map(toEntry))) {
+					ctx.ui.notify("new-model-picker: could not save favorites", "error");
+					return;
+				}
+				ctx.ui.notify(adding ? `Favorite: ${item.value}` : `Removed favorite: ${item.value}`, "info");
 				rebuild(search.getValue());
 			};
 			list.onSaveDefault = (item) => {
 				const model = byKey.get(item.value);
-				if (!model || !saveConfiguredDefault(model)) {
+				if (!model || !store.saveConfiguredDefault(model)) {
 					ctx.ui.notify("new-model-picker: could not save default model", "error");
 					return;
 				}
@@ -643,50 +219,100 @@ function pickModel(
 				ctx.ui.notify(`Default model: ${defaultKey}`, "info");
 				rebuild(search.getValue());
 			};
-			list.onSelect = (item) => {
-				if (!manageMode) return done(byKey.get(item.value) ?? null);
-				const keys = manageMode === "favorites" ? favoriteKeys : hiddenKeys;
-				const nextKeys = keys.includes(item.value) ? keys.filter((key) => key !== item.value) : [item.value, ...keys];
-				if (manageMode === "favorites") { favoriteKeys = nextKeys; saveFavorites(nextKeys.map((key) => ({ provider: byKey.get(key)!.provider, id: byKey.get(key)!.id }))); }
-				else { hiddenKeys = nextKeys; saveHidden(nextKeys.map((key) => ({ provider: byKey.get(key)!.provider, id: byKey.get(key)!.id }))); }
-				rebuild(search.getValue());
-			};
-			list.onCancel = () => {
-				if (manageMode) { manageMode = null; rebuild(""); }
-				else done(null);
-			};
 			return list;
 		};
 
-		let settingsOpen = false;
-		let settingsIndex = 0;
-		let selectList = buildList("");
-		listSlot.addChild(selectList);
+		const toEntry = (key: string): { provider: string; id: string } => {
+			const model = byKey.get(key)!;
+			return { provider: model.provider, id: model.id };
+		};
+
+		const persistHidden = (): boolean => {
+			if (store.saveHidden(hiddenKeys.map(toEntry))) return true;
+			ctx.ui.notify("new-model-picker: could not save hidden models", "error");
+			return false;
+		};
+
+		// Hiding the default or active model would leave the picker without a
+		// usable [default] marker, so it is refused.
+		const canHide = (key: string): boolean => {
+			if (!byKey.has(key)) return false;
+			if (key === defaultKey || key === currentKey) {
+				ctx.ui.notify(`Cannot hide the default/active model: ${key}`, "warning");
+				return false;
+			}
+			return true;
+		};
+
+		const toggleEntry = (value: string): void => {
+			const keys = manageMode === "favorites" ? favoriteKeys : hiddenKeys;
+			if (manageMode === "hidden" && !keys.includes(value) && !canHide(value)) return;
+			const adding = !keys.includes(value);
+			const nextKeys = adding ? [value, ...keys] : keys.filter((key) => key !== value);
+			if (manageMode === "favorites") {
+				favoriteKeys = nextKeys;
+				if (!store.saveFavorites(nextKeys.map(toEntry))) {
+					ctx.ui.notify("new-model-picker: could not save favorites", "error");
+					return;
+				}
+			} else {
+				hiddenKeys = nextKeys;
+				if (!persistHidden()) return;
+			}
+			rebuild(search.getValue());
+		};
 
 		container.addChild(title);
 		container.addChild(search);
 		container.addChild(listSlot);
 		container.addChild(help);
+		selectList = buildList("");
+		updateChrome();
 
 		const rebuild = (query: string) => {
 			listSlot.clear();
 			selectList = buildList(query);
 			listSlot.addChild(selectList);
+			updateChrome();
+		};
+
+		const openManagement = (mode: "favorites" | "hidden") => {
+			manageMode = mode;
+			uiMode = "pick";
+			search.setValue("");
+			selectedValue = "";
+			rebuild("");
+		};
+
+		const toggleAutostart = (reason: "startup" | "new") => {
+			const nextConfig = store.loadConfig();
+			const enabled = nextConfig.reasons.includes(reason);
+			nextConfig.reasons = enabled
+				? nextConfig.reasons.filter((value) => value !== reason)
+				: [...new Set([...nextConfig.reasons, reason])];
+			if (store.saveConfig(nextConfig)) ctx.ui.notify(`Picker on ${reason}: ${enabled ? "off" : "on"}`, "info");
+			else ctx.ui.notify("new-model-picker: could not save configuration", "error");
 		};
 
 		return {
 			render: (width: number) => {
 				const innerWidth = Math.max(1, width - 2);
-				const config = loadConfig();
-				const settingsLines = [
-					theme.fg("accent", theme.bold("Settings")),
-					`${settingsIndex === 0 ? "→ " : "  "}[${config.reasons.includes("startup") ? "x" : " "}] Show picker on application startup`,
-					`${settingsIndex === 1 ? "→ " : "  "}[${config.reasons.includes("new") ? "x" : " "}] Show picker on new session`,
-					`${settingsIndex === 2 ? "→ " : "  "}Manage Favorites (Ctrl+F in picker)`,
-					`${settingsIndex === 3 ? "→ " : "  "}Manage Hidden models (Ctrl+H in picker)`,
-					theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
-				];
-				const content = settingsOpen ? settingsLines : container.render(innerWidth);
+				let content: string[];
+				if (uiMode === "settings") {
+					const reasons = store.loadConfig().reasons;
+					const row = (index: number, checked: boolean, label: string) =>
+						`  ${settingsIndex === index ? "→" : " "} [${checked ? "x" : " "}] ${label}`;
+					content = [
+						theme.fg("accent", theme.bold("Settings")),
+						row(0, reasons.includes("startup"), "Show picker on application startup"),
+						row(1, reasons.includes("new"), "Show picker on new session"),
+						row(2, false, "Manage Favorites"),
+						row(3, false, "Manage Hidden models"),
+						theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
+					];
+				} else {
+					content = container.render(innerWidth);
+				}
 				const horizontal = "─".repeat(innerWidth);
 				return [
 					borderColor(`╭${horizontal}╮`),
@@ -699,22 +325,23 @@ function pickModel(
 			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data: string) => {
-				if (settingsOpen) {
-					if (matchesKey(data, Key.escape)) settingsOpen = false;
-					else if (matchesKey(data, Key.up)) settingsIndex = (settingsIndex + 3) % 4;
-					else if (matchesKey(data, Key.down)) settingsIndex = (settingsIndex + 1) % 4;
-					else if (matchesKey(data, Key.enter) && settingsIndex < 2) toggleAutostart(settingsIndex === 0 ? "startup" : "new");
-					else if (matchesKey(data, Key.enter)) {
-						manageMode = settingsIndex === 2 ? "favorites" : "hidden";
-						settingsOpen = false;
-						search.setValue("");
-						rebuild("");
-					}
-				} else if (data === "\x03") {
-					// ctrl+c
+				if (data === "\x03") {
 					done(null);
-				} else if (matchesKey(data, Key.ctrl("o"))) {
-					settingsOpen = true;
+				} else if (uiMode === "settings") {
+					if (matchesKey(data, Key.escape)) {
+						uiMode = "pick";
+						updateChrome();
+					} else if (matchesKey(data, Key.up)) settingsIndex = (settingsIndex + 3) % 4;
+					else if (matchesKey(data, Key.down)) settingsIndex = (settingsIndex + 1) % 4;
+					else if (matchesKey(data, Key.enter)) {
+						if (settingsIndex === 0) toggleAutostart("startup");
+						else if (settingsIndex === 1) toggleAutostart("new");
+						else openManagement(settingsIndex === 2 ? "favorites" : "hidden");
+					}
+				} else if (matchesKey(data, Key.ctrl("o")) && !manageMode) {
+					uiMode = "settings";
+					settingsIndex = 0;
+					updateChrome();
 				} else if (
 					matchesKey(data, Key.up) ||
 					matchesKey(data, Key.down) ||
@@ -722,14 +349,13 @@ function pickModel(
 					matchesKey(data, Key.right) ||
 					matchesKey(data, Key.enter) ||
 					matchesKey(data, Key.escape) ||
-					matchesKey(data, Key.ctrl("c")) ||
 					matchesKey(data, Key.ctrl("f")) ||
 					matchesKey(data, Key.ctrl("h")) ||
 					matchesKey(data, Key.ctrl("g")) ||
 					matchesKey(data, Key.ctrl("s"))
 				) {
 					selectList.handleInput(data);
-				} else {
+				} else if (!manageMode) {
 					const before = search.getValue();
 					search.handleInput(data);
 					const after = search.getValue();
@@ -747,7 +373,7 @@ function pickModel(
 			margin: 1,
 		},
 	}).then(async (result) => {
-		if (!result) return; // Esc — оставить текущую модель
+		if (!result) return; // Esc — keep the current model
 
 		if (keyOf(result) === currentKey) {
 			ctx.ui.notify(`Model unchanged: ${keyOf(result)}`, "info");
@@ -760,17 +386,17 @@ function pickModel(
 			return;
 		}
 
-		// Сохранить в недавние (наверх)
-		const entry: RecentEntry = { provider: result.provider, id: result.id };
-		const next = [entry, ...loadRecents().filter((e) => !(e.provider === entry.provider && e.id === entry.id))];
-		saveRecents(next);
+		// Store in recents (front), only after a successful apply.
+		const entry = { provider: result.provider, id: result.id };
+		const next = [entry, ...store.loadRecents().filter((e) => !(e.provider === entry.provider && e.id === entry.id))];
+		if (!store.saveRecents(next)) ctx.ui.notify("new-model-picker: could not save recents", "warning");
 
 		ctx.ui.notify(`Model: ${keyOf(result)}`, "info");
 	});
 }
 
 export default function (pi: ExtensionAPI) {
-	// Конфиг читаем на каждый session_start — правки подхватываются без /reload
+	// Config is read on every session_start so edits are picked up without /reload.
 	pi.on("session_start", async (event, ctx) => {
 		const ui = ctx.ui as unknown as Record<PropertyKey, unknown>;
 		if (!ui[AUTOCOMPLETE_UI_MARKER]) {
@@ -796,16 +422,15 @@ export default function (pi: ExtensionAPI) {
 			ui[AUTOCOMPLETE_UI_MARKER] = true;
 		}
 
-		const config = loadConfig();
-		if (!config.reasons.includes(event.reason)) return;
+		const config = store.loadConfig();
+		if (!config.reasons.includes(event.reason) || !isValidReason(event.reason)) return;
 		await pickModel(pi, ctx, config, false);
 	});
 
 	pi.registerCommand("model-picker", {
 		description: "Choose a model (enhanced picker)",
 		handler: async (_args, ctx) => {
-			await pickModel(pi, ctx, loadConfig(), true);
+			await pickModel(pi, ctx, store.loadConfig(), true);
 		},
 	});
-
 }
