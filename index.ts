@@ -333,14 +333,16 @@ function pickModel(
 				let content: string[];
 				if (uiMode === "settings") {
 					const reasons = store.loadConfig().reasons;
-					const row = (index: number, checked: boolean, label: string) =>
+					const toggleRow = (index: number, checked: boolean, label: string) =>
 						`  ${settingsIndex === index ? "→" : " "} [${checked ? "x" : " "}] ${label}`;
+					const actionRow = (index: number, label: string) =>
+						`  ${settingsIndex === index ? "→" : " "} ${label}`;
 					content = [
 						theme.fg("accent", theme.bold("Settings")),
-						row(0, reasons.includes("startup"), "Show picker on application startup"),
-						row(1, reasons.includes("new"), "Show picker on new session"),
-						row(2, false, "Manage Favorites (Ctrl+F in picker)"),
-						row(3, false, "Manage Hidden models (Ctrl+H in picker)"),
+						toggleRow(0, reasons.includes("startup"), "Show picker on application startup"),
+						toggleRow(1, reasons.includes("new"), "Show picker on new session"),
+						actionRow(2, "Manage Favorites (Ctrl+F in picker)"),
+						actionRow(3, "Manage Hidden models (Ctrl+H in picker)"),
 						theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
 					];
 				} else if (manageMode) {
