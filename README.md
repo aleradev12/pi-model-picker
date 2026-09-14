@@ -13,12 +13,24 @@ on session start (per config), after `/new`, and via `/model-picker`.
 - `scripts/bundle.mjs` — inlines `core.ts` + `index.ts` into the single-file
   deployable `dist/new-model-picker.ts` (copy it to `~/.pi/agent/extensions/`).
 - `scripts/check.mjs` — syntax-checks the TS sources via Node's type stripper.
+- `scripts/smoke-bundle.mjs` — imports the deployable bundle and fails if it
+  still depends on `./core.ts`.
 
 ## Commands
 
+```sh
+npm run verify   # syntax check + tests + bundle + standalone import smoke test
 ```
-npm run verify   # syntax check + tests + bundle
+
+For local development, Pi must load the standalone bundle, not `index.ts`:
+
+```sh
+ln -sfn "$PWD/dist/new-model-picker.ts" ~/.pi/agent/extensions/new-model-picker.ts
 ```
+
+`index.ts` imports `./core.ts`; Pi resolves relative imports from the extension
+entry path, so linking `index.ts` directly into `~/.pi/agent/extensions/` will
+not work.
 
 ## UX summary
 

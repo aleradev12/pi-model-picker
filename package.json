@@ -8,7 +8,8 @@
     "test": "node --test test/core.test.ts",
     "check": "node scripts/check.mjs",
     "bundle": "node scripts/bundle.mjs",
-    "verify": "npm run check && npm run test && npm run bundle"
+    "smoke:bundle": "node scripts/smoke-bundle.mjs",
+    "verify": "npm run check && npm run test && npm run bundle && npm run smoke:bundle"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.85.1",
