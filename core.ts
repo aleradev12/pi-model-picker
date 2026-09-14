@@ -297,8 +297,14 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		.filter((key) => visible(key))
 		.map((key) => byKey.get(key))
 		.filter((m): m is PickerModel => !!m);
-	const favoriteGroup: ModelGroup[] =
-		favorites.length > 0 ? [{ id: "favorites", title: "Favorites", items: favorites.map(itemOf), collapsible: true }] : [];
+	const favoriteGroup: ModelGroup[] = favorites.length > 0
+		? [{
+			id: "favorites",
+			title: "Favorites",
+			items: favorites.map((model) => ({ ...itemOf(model), description: `· ${model.provider}` })),
+			collapsible: true,
+		}]
+		: [];
 
 	const preferredKeys = [defaultKey, currentKey, ...recentKeys].filter((key, index, keys) => !!key && visible(key) && keys.indexOf(key) === index);
 	return [...favoriteGroup, ...groups, ...hiddenGroup];

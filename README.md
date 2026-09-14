@@ -40,7 +40,8 @@ not work.
 - The focused row stays centered while content scrolls beneath it. Blank rows
   are added near the beginning/end so the cursor never drifts vertically.
 - Model rows are indented relative to headings and the focused model uses the
-  same selected background treatment as a focused collapsed heading.
+  same selected background treatment as a focused collapsed heading. Favorites
+  include a compact muted provider suffix because that group mixes providers.
 - ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
   all groups; Enter applies; Esc cancels.
 - A fixed two-line panel below search shows compact context/reasoning and pricing

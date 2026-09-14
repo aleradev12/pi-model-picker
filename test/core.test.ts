@@ -282,6 +282,7 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.id), ["favorites", "provider:openai", "provider:anthropic", "hidden"]);
+	assert.equal(groups[0]!.items[0]!.description, "· openai");
 	assert.equal(groups.at(-1)!.initiallyCollapsed, true);
 	// hidden model appears ONLY in the hidden group
 	const nonHiddenGroups = groups.slice(0, 3).flatMap((g) => g.items.map((i) => i.value));
