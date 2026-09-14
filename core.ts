@@ -42,9 +42,9 @@ export function isValidReason(reason: string): boolean {
 
 /**
  * Chrome lines around the list inside the overlay: box border (2), title (1),
- * search input (1), help (2), plus slack for padding/rounding.
+ * search input (1), fixed model details (2), help (2), plus slack.
  */
-const OVERLAY_CHROME_LINES = 2 + 1 + 1 + 2 + 2;
+const OVERLAY_CHROME_LINES = 2 + 1 + 1 + 2 + 2 + 2;
 /** The overlay renders at most 99% of terminal height (overlayOptions). */
 const OVERLAY_MAX_HEIGHT_FRACTION = 0.99;
 
@@ -288,7 +288,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		.filter((m) => matchesQuery(m, m.name ?? "", q));
 	const hiddenGroup: ModelGroup[] =
 		hidden.length > 0
-			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true, initiallyCollapsed: q.length > 0 }]
+			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true, initiallyCollapsed: true }]
 			: [];
 
 	if (q) return [...groups, ...hiddenGroup];

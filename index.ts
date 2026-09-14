@@ -5,7 +5,7 @@
  *  - Grouped list (Favorites / providers / Hidden) with collapsible headers;
  *    ↑/↓ visits models and collapsed headers, skipping expanded headers.
  *  - Typing filters (fuzzy over provider/id/name); ←/→ collapse/expand groups.
- *  - Selected model shows wrapped inline details; the title owns the count.
+ *  - Selected model details use a fixed two-line panel; the title owns the count.
  *  - Ctrl+O opens settings (startup/new toggles + Favorites/Hidden management);
  *    management modes show provider groups only, Enter toggles, Esc goes back.
  *  - Esc cancels; a pick is applied via pi.setModel() and stored in recents.
@@ -108,10 +108,6 @@ function pickModel(
 		value: keyOf(model),
 		label: labelOf(model),
 		description: descriptionOf(model),
-		inlineDetails: [
-			`${model.provider} · ${formatContext(model.contextWindow)} · ${model.reasoning ? `reasoning: available · default: ${defaultThinkingLevel}` : "reasoning: unavailable"}`,
-			`↑ Read: ${formatNumber(model.cost.input)}$   ↓ Write: ${formatNumber(model.cost.output)}$   Cache: ${formatNumber(model.cost.cacheRead)}$ / 1M tokens`,
-		],
 	});
 
 	const groupsFor = (query: string) =>
@@ -133,6 +129,7 @@ function pickModel(
 		const borderColor = (s: string) => theme.fg("accent", s);
 		const title = new Text(theme.fg("accent", theme.bold("Pick a model")));
 		const search = new Input({ placeholder: "Filter (provider / model / name)…" });
+		const details = new Text("\n");
 		const listSlot = new Container();
 		const help = new Text("");
 
@@ -149,6 +146,21 @@ function pickModel(
 		let settingsIndex = 0;
 		let selectedValue = "";
 		let selectList: GroupedModelList;
+
+		const updateDetails = (item: ListItem | null): void => {
+			const model = item ? byKey.get(item.value) : undefined;
+			if (!model) {
+				details.setText("\n");
+				return;
+			}
+			const reasoning = model.reasoning
+				? `reasoning: available · default: ${defaultThinkingLevel}`
+				: "reasoning: unavailable";
+			details.setText(theme.fg("muted", [
+				`  ${model.provider} · ${formatContext(model.contextWindow)} · ${reasoning}`,
+				`  ↑ Read: ${formatNumber(model.cost.input)}$   ↓ Write: ${formatNumber(model.cost.output)}$   Cache: ${formatNumber(model.cost.cacheRead)}$ / 1M tokens`,
+			].join("\n")));
+		};
 
 		const updateChrome = () => {
 			if (uiMode === "settings") {
@@ -183,6 +195,7 @@ function pickModel(
 			selectedValue = list.getSelectedItem()?.value ?? selectedValue;
 			list.onSelectionChange = (item) => {
 				if (item) selectedValue = item.value;
+				updateDetails(item);
 				updateChrome();
 			};
 			list.onStateChange = updateChrome;
@@ -277,16 +290,19 @@ function pickModel(
 
 		container.addChild(title);
 		container.addChild(search);
+		container.addChild(details);
 		container.addChild(listSlot);
 		container.addChild(help);
 		selectList = buildList("");
 		listSlot.addChild(selectList);
+		updateDetails(selectList.getSelectedItem());
 		updateChrome();
 
 		const rebuild = (query: string) => {
 			listSlot.clear();
 			selectList = buildList(query);
 			listSlot.addChild(selectList);
+			updateDetails(selectList.getSelectedItem());
 			updateChrome();
 		};
 

@@ -39,8 +39,10 @@ not work.
   is highlighted, and Enter/→ expands it onto its first model.
 - ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
   all groups; Enter applies; Esc cancels.
-- The selected model shows wrapped inline details; the title owns the position
-  count (`Pick a model (n/m)`, or `Manage Favorites/Hidden models (n/m)`).
+- A fixed two-line panel below search shows context, reasoning, and full pricing
+  for the focused model without changing the list height. Resting rows show only
+  compact pricing. The title owns the position count (`Pick a model (n/m)`, or
+  `Manage Favorites/Hidden models (n/m)`).
 - Ctrl+S sets the configured default (canonical model id in `settings.json`),
   Ctrl+F/Ctrl+H toggle favorite/hidden for the highlighted model. Hiding the
   default or active model is refused.
@@ -48,7 +50,7 @@ not work.
   management for Favorites/Hidden (provider groups only, hidden included,
   Enter toggles without exiting, Esc returns to Settings).
 - Ordinary mode has no Recent group. Hidden models appear only in the final
-  Hidden group; matching hidden search results keep that group collapsed.
+  Hidden group, which starts collapsed on every picker opening and after search.
 
 ## Persistence
 

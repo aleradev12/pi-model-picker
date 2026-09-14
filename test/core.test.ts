@@ -246,6 +246,7 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.id), ["favorites", "provider:openai", "provider:anthropic", "hidden"]);
+	assert.equal(groups.at(-1)!.initiallyCollapsed, true);
 	// hidden model appears ONLY in the hidden group
 	const nonHiddenGroups = groups.slice(0, 3).flatMap((g) => g.items.map((i) => i.value));
 	assert.ok(!nonHiddenGroups.includes("openai/gpt-4"));
@@ -329,14 +330,14 @@ test("listLineBudget: caps on large terminals and shrinks on small ones", () => 
 	assert.equal(listLineBudget(undefined), listLineBudget(24));
 	// Normal terminal: budget fits inside the 99% overlay after chrome.
 	const budget = listLineBudget(24);
-	assert.equal(budget, Math.floor(24 * 0.99) - 8);
+	assert.equal(budget, Math.floor(24 * 0.99) - 10);
 	assert.ok(budget >= 1);
 	// Small terminal: budget never exceeds what the overlay can show, so the
 	// overlay must not truncate the picker.
 	for (const rows of [8, 10, 12, 14, 16]) {
 		const small = listLineBudget(rows);
 		assert.ok(small >= 1, `rows=${rows} budget=${small}`);
-		assert.equal(small, Math.max(1, Math.floor(rows * 0.99) - 8));
+		assert.equal(small, Math.max(1, Math.floor(rows * 0.99) - 10));
 		assert.ok(small <= 26);
 	}
 	assert.equal(listLineBudget(0), listLineBudget(24));
