@@ -310,7 +310,10 @@ class GroupedModelList {
 		const groupIndent = nested ? "  " : "";
 		const prefix = width >= 2 ? `${groupIndent}${selected ? "→ " : "  "}` : "";
 		const labelWidth = Math.max(1, width - prefix.length);
-		const label = selected ? this.theme.selectedText(item.label) : item.label;
+		const hasDefaultMarker = item.label.startsWith("◆ ");
+		const labelText = hasDefaultMarker ? item.label.slice(2) : item.label;
+		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
+		const label = hasDefaultMarker ? `${this.theme.description("◆ ")}${modelLabel}` : modelLabel;
 		const description = item.description ? `  ${item.description}` : "";
 		if (visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
 			lines.push(`${prefix}${label}${this.theme.description(description)}`);
@@ -330,16 +333,10 @@ class GroupedModelList {
 		if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
 			if (visible.length === 0 && !this.focusedGroupId) return;
 			if (this.focusedGroupId) {
-				if (visible.length === 0) {
-					const collapsedGroups = this.groups.filter((group) => this.collapsed.has(group.id));
-					const index = collapsedGroups.findIndex((group) => group.id === this.focusedGroupId);
-					const direction = matchesKey(data, Key.up) ? -1 : 1;
-					this.focusedGroupId = collapsedGroups[(index + direction + collapsedGroups.length) % collapsedGroups.length]?.id;
-					this.onStateChange?.();
-					return;
-				}
-				this.focusedGroupId = undefined;
-				this.onSelectionChange?.(visible[this.selectedIndex]!.item);
+				const collapsedGroups = this.groups.filter((group) => this.collapsed.has(group.id));
+				const index = collapsedGroups.findIndex((group) => group.id === this.focusedGroupId);
+				const direction = matchesKey(data, Key.up) ? -1 : 1;
+				this.focusedGroupId = collapsedGroups[(index + direction + collapsedGroups.length) % collapsedGroups.length]?.id;
 				this.onStateChange?.();
 				return;
 			}
@@ -462,12 +459,9 @@ function pickModel(
 
 	const labelOf = (m: Model<Api>): string => {
 		const key = keyOf(m);
-		// A default model gets ◆ even when it is also active; ● marks an active
-		// non-default model, so the two markers are never shown together.
-		const marker = key === defaultKey ? "◆ " : key === currentKey ? "● " : "";
+		const marker = key === defaultKey ? "◆ " : "";
 		const name = m.name && m.name !== m.id ? ` — ${m.name}` : "";
-		const recent = recentSet.has(key) ? "  ★" : "";
-		return `${marker}${m.id}${name}${recent}`;
+		return `${marker}${m.id}${name}`;
 	};
 
 	const formatNumber = (value: number): string =>
@@ -572,7 +566,7 @@ function pickModel(
 				? "←→ show group"
 				: "←→ collapse group";
 			const allAction = list.allGroupsCollapsed() ? "ctrl+g show all groups" : "ctrl+g collapse all groups";
-			help.setText(theme.fg("dim", `↑↓ select | enter apply | ctrl+s set default | ctrl+o settings | esc cancel\n${groupAction} | ${allAction} | ◆ default | ● active | ★ recent`));
+			help.setText(theme.fg("dim", `↑↓ select | enter apply | ctrl+s set default | ctrl+o settings | esc cancel\n${groupAction} | ${allAction}`));
 		};
 
 		const buildList = (query: string): GroupedModelList => {
