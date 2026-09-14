@@ -37,9 +37,10 @@ not work.
 - ↑/↓ moves through models and collapsed group headers with wrap-around;
   expanded headers are labels, not focus targets. A focused collapsed header
   is highlighted, and Enter/→ expands it onto its first model.
-- In long lists the focused row stays near 40% of the viewport while content
-  scrolls beneath it. At the beginning/end the viewport clamps naturally,
-  without blank filler rows.
+- The focused row stays centered while content scrolls beneath it. Blank rows
+  are added near the beginning/end so the cursor never drifts vertically.
+- Model rows are indented relative to headings and the focused model uses the
+  same selected background treatment as a focused collapsed heading.
 - ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
   all groups; Enter applies; Esc cancels.
 - A fixed two-line panel below search shows compact context/reasoning and pricing
@@ -47,8 +48,9 @@ not work.
   pricing. The title owns the position count (`Pick a model (n/m)`, or
   `Manage Favorites/Hidden models (n/m)`).
 - Ctrl+S sets the configured default (canonical model id in `settings.json`),
-  Ctrl+F/Ctrl+H toggle favorite/hidden for the highlighted model. Hiding the
-  default or active model is refused.
+  Ctrl+F/Ctrl+H toggle favorite/hidden for the highlighted model. After hiding,
+  focus moves to the next distinct model, or the previous one at the end.
+  Hiding the default or active model is refused.
 - Ctrl+O opens Settings: toggle startup/new triggers or open full checkbox
   management for Favorites/Hidden (provider groups only, hidden included,
   Enter toggles without exiting, Esc returns to Settings).

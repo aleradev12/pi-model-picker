@@ -128,7 +128,7 @@ function pickModel(
 		const help = new Text("", 1, 0);
 
 		const listTheme: ListTheme = {
-			selectedText: (t: string) => theme.fg("accent", t),
+			selectedText: (t: string) => theme.bg("selectedBg", theme.fg("text", t)),
 			selectedHeading: (t: string) => theme.bg("selectedBg", theme.fg("text", t)),
 			description: (t: string) => theme.fg("muted", t),
 			scrollInfo: (t: string) => theme.fg("dim", t),
@@ -213,8 +213,14 @@ function pickModel(
 				// hidden default/active model must always be unhide-able.
 				const hiding = !hiddenKeys.includes(item.value);
 				if (hiding && !canHide(item.value)) return;
+				const previousKeys = hiddenKeys;
+				const fallbackValue = hiding ? list.fallbackValueAfterRemoval() : item.value;
 				hiddenKeys = hiding ? [item.value, ...hiddenKeys] : hiddenKeys.filter((key) => key !== item.value);
-				if (!persistHidden()) return;
+				if (!persistHidden()) {
+					hiddenKeys = previousKeys;
+					return;
+				}
+				selectedValue = fallbackValue;
 				ctx.ui.notify(hiding ? `Hidden: ${item.value}` : `Shown: ${item.value}`, "info");
 				rebuild(search.getValue());
 			};

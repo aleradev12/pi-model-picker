@@ -183,22 +183,40 @@ test("row model: positionLabel counts items by cursor index, never 0/N", () => {
 	assert.equal(list.positionLabel(), "2/3");
 });
 
-test("row model: long-list selection stays at a 40% viewport anchor", () => {
+test("row model: selection stays centered even at list edges", () => {
 	const ids = Array.from({ length: 20 }, (_, index) => `m${index + 1}`);
 	const { list } = makeList([group("models", ids)], 8);
-	const selectedLine = () => list.render(50).findIndex((line) => line.startsWith("→ "));
+	const selectedLine = () => list.render(50).findIndex((line) => line.includes("→ "));
 
-	for (const id of ["m7", "m8", "m9", "m10", "m11", "m12"]) {
+	for (const id of ["m1", "m7", "m8", "m9", "m12", "m20"]) {
 		list.setSelectedValue(id);
-		assert.equal(selectedLine(), 2, `expected stable anchor for ${id}`);
+		const lines = list.render(50);
+		assert.equal(selectedLine(), 3, `expected centered anchor for ${id}`);
+		assert.equal(lines.length, 8);
 	}
+});
 
+test("row model: removal fallback prefers next distinct item, then previous", () => {
+	const { list } = makeList([group("favorites", ["m2"]), group("provider", ["m1", "m2", "m3"])]);
+	list.setSelectedValue("m2");
+	assert.equal(list.fallbackValueAfterRemoval(), "m1", "duplicate occurrence of the removed model is skipped");
+	const simple = makeList([group("models", ["m1", "m2", "m3"])]).list;
+	simple.setSelectedValue("m2");
+	assert.equal(simple.fallbackValueAfterRemoval(), "m3");
+	simple.setSelectedValue("m3");
+	assert.equal(simple.fallbackValueAfterRemoval(), "m2");
+	const single = makeList([group("models", ["only"])]).list;
+	assert.equal(single.fallbackValueAfterRemoval(), "");
+});
+
+test("row model: selected model is highlighted and indented from headings", () => {
+	const theme: ListTheme = { ...plainTheme, selectedText: (text) => `[selected-model]${text}` };
+	const list = new GroupedModelList([group("models", ["m1", "m2"])], () => 8, theme);
 	list.setSelectedValue("m1");
-	assert.equal(selectedLine(), 1, "top edge includes the expanded group heading");
-	list.setSelectedValue("m20");
-	const endLines = list.render(50);
-	assert.ok(selectedLine() > 2, "bottom edge backfills above without blank rows");
-	assert.equal(endLines.length, 8);
+	const lines = list.render(40);
+	const selected = lines.find((line) => line.includes("[selected-model]"));
+	assert.match(selected!, /  → m1/);
+	assert.equal(lines.filter((line) => line.includes("[selected-model]")).length, 1);
 });
 
 test("row model: render respects the line budget including selected details", () => {

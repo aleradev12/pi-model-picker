@@ -392,6 +392,19 @@ export class GroupedModelList {
 		return row?.kind === "item" ? row.item : null;
 	}
 
+	/** Next distinct item in display order, or the previous one when absent. */
+	fallbackValueAfterRemoval(): string {
+		const rows = this.rows;
+		const removedValue = this.getSelectedItem()?.value;
+		for (let index = this.index + 1; index < rows.length; index++) {
+			if (rows[index]!.kind === "item" && rows[index]!.item.value !== removedValue) return rows[index]!.item.value;
+		}
+		for (let index = this.index - 1; index >= 0; index--) {
+			if (rows[index]!.kind === "item" && rows[index]!.item.value !== removedValue) return rows[index]!.item.value;
+		}
+		return "";
+	}
+
 	isGroupFocused(): boolean {
 		return this.rows[this.index]?.kind === "header";
 	}
@@ -495,40 +508,35 @@ export class GroupedModelList {
 		const rendered = rows.map((row) => this.renderRow(row, width));
 		const budget = Math.max(1, this.maxLines());
 		const selectedHeight = rendered[this.index]!.length;
-		// A selected row may contain wrapped details and exceed the viewport.
 		if (selectedHeight >= budget) return rendered[this.index]!.slice(0, budget);
 
-		// Reserve one line for a neutral scroll indicator whenever all rows do not
-		// fit. In the middle of a long list, keep the selected row about 40% down
-		// the viewport; near either edge, backfill naturally without blank rows.
-		const totalLines = rendered.reduce((sum, lines) => sum + lines.length, 0);
-		const contentBudget = totalLines > budget ? budget - 1 : budget;
-		const targetBefore = Math.floor(Math.max(0, contentBudget - selectedHeight) * 0.4);
+		// Keep one stable status row and center the selected block in the remaining
+		// viewport. Missing content near either edge becomes blank padding, so the
+		// cursor never drifts up or down while navigating.
+		const contentBudget = Math.max(1, budget - 1);
+		const targetBefore = Math.floor(Math.max(0, contentBudget - selectedHeight) / 2);
+		const targetAfter = contentBudget - selectedHeight - targetBefore;
 		let start = this.index;
 		let before = 0;
 		while (start > 0 && before + rendered[start - 1]!.length <= targetBefore) {
 			start--;
 			before += rendered[start]!.length;
 		}
-
 		let end = this.index + 1;
-		let used = before + selectedHeight;
-		while (end < rows.length && used + rendered[end]!.length <= contentBudget) {
-			used += rendered[end]!.length;
+		let after = 0;
+		while (end < rows.length && after + rendered[end]!.length <= targetAfter) {
+			after += rendered[end]!.length;
 			end++;
 		}
-		// At the end of the list, use spare space above instead of rendering blanks.
-		while (start > 0 && used + rendered[start - 1]!.length <= contentBudget) {
-			start--;
-			used += rendered[start]!.length;
-		}
 
-		const lines: string[] = [];
-		for (let i = start; i < end; i++) lines.push(...rendered[i]!);
+		const lines: string[] = Array.from({ length: targetBefore - before }, () => "");
+		for (let index = start; index < end; index++) lines.push(...rendered[index]!);
+		while (lines.length < contentBudget) lines.push("");
+
 		const truncated = start > 0 || end < rows.length;
-		if (truncated) {
+		if (budget > 1) {
 			const hidden = rows.length - (end - start);
-			lines.push(this.theme.scrollInfo(`  … ${hidden} hidden (↑↓ to scroll)`));
+			lines.push(truncated ? this.theme.scrollInfo(`  … ${hidden} hidden (↑↓ to scroll)`) : "");
 		}
 		return lines;
 	}
@@ -547,21 +555,26 @@ export class GroupedModelList {
 
 	private renderItem(item: ListItem, width: number): string[] {
 		const selected = this.rows[this.index]?.kind === "item" && this.rows[this.index]!.item === item;
-		const prefix = width >= 2 ? `${selected ? "→ " : "  "}` : "";
+		// Models are indented relative to group headings; the arrow occupies the
+		// same model column without shifting the label.
+		const prefix = width >= 4 ? (selected ? "  → " : "    ") : selected ? "→ " : "  ";
 		const labelWidth = Math.max(1, width - prefix.length);
 		const hasDefaultMarker = item.label.startsWith("[default] ");
 		const labelText = hasDefaultMarker ? item.label.slice("[default] ".length) : item.label;
-		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
-		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${modelLabel}` : modelLabel;
+		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${labelText}` : labelText;
 
 		const description = item.description ? `  ${item.description}` : "";
 		if (!(selected && item.inlineDetails?.length) && visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
-			return [`${prefix}${label}${this.theme.description(description)}`];
+			const line = `${prefix}${label}${this.theme.description(description)}`;
+			return [selected ? this.theme.selectedText(line) : line];
 		}
 
 		const lines: string[] = [];
 		const labelLines = wrapTextWithAnsi(label, labelWidth);
-		lines.push(...labelLines.map((line, lineIndex) => `${lineIndex === 0 ? prefix : " ".repeat(prefix.length)}${line}`));
+		lines.push(...labelLines.map((line, lineIndex) => {
+			const rendered = `${lineIndex === 0 ? prefix : " ".repeat(prefix.length)}${line}`;
+			return selected ? this.theme.selectedText(rendered) : rendered;
+		}));
 		if (selected && item.inlineDetails?.length) {
 			const indent = "        ";
 			const detailWidth = Math.max(1, width - indent.length);
