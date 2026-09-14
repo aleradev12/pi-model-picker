@@ -24,7 +24,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Container, Input, Key, matchesKey, type SelectItem, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 interface PickerConfig {
@@ -528,14 +528,12 @@ function pickModel(
 	return ctx.ui.custom<Model<Api> | null>((tui, theme, _kb, done) => {
 		const container = new Container();
 		const borderColor = (s: string) => theme.fg("accent", s);
-
-		const top = new DynamicBorder(borderColor);
 		const title = new Text(theme.fg("accent", theme.bold("Pick a model")));
 		const search = new Input({ placeholder: "Filter (provider / model / name)…" });
 		const listSlot = new Container();
 		const details = new Text("");
 		const help = new Text("");
-		const bottom = new DynamicBorder(borderColor);
+
 
 		const listTheme = {
 			selectedText: (t: string) => theme.fg("accent", t),
@@ -636,13 +634,11 @@ function pickModel(
 		let selectList = buildList("");
 		listSlot.addChild(selectList);
 
-		container.addChild(top);
 		container.addChild(title);
 		container.addChild(search);
 		container.addChild(listSlot);
 		container.addChild(details);
 		container.addChild(help);
-		container.addChild(bottom);
 
 		const rebuild = (query: string) => {
 			listSlot.clear();
@@ -651,7 +647,19 @@ function pickModel(
 		};
 
 		return {
-			render: (width: number) => container.render(width),
+			render: (width: number) => {
+				const innerWidth = Math.max(1, width - 2);
+				const content = container.render(innerWidth);
+				const horizontal = "─".repeat(innerWidth);
+				return [
+					borderColor(`╭${horizontal}╮`),
+					...content.map((line) => {
+						const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
+						return `${borderColor("│")}${line}${padding}${borderColor("│")}`;
+					}),
+					borderColor(`╰${horizontal}╯`),
+				];
+			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data: string) => {
 				// Навигация/подтверждение/отмена — списку, печатаемые символы — поиску
