@@ -98,8 +98,8 @@ function pickModel(
 		tokens >= 1_000_000 ? `${formatNumber(tokens / 1_000_000)}m ctx` : `${Math.round(tokens / 1_000)}k ctx`;
 
 	const descriptionOf = (m: Model<Api>): string => {
-		// Rates are USD per 1M tokens: read/input, write/output, and cache read.
-		let text = `${formatContext(m.contextWindow)}  |  $ R${formatNumber(m.cost.input)} W${formatNumber(m.cost.output)} C${formatNumber(m.cost.cacheRead)}`;
+		// Keep the resting row compact; context/reasoning live in focused details.
+		let text = `$ R${formatNumber(m.cost.input)} W${formatNumber(m.cost.output)} C${formatNumber(m.cost.cacheRead)}`;
 		if (!ctx.modelRegistry.hasConfiguredAuth(m)) text += " · no auth";
 		return text;
 	};
@@ -138,6 +138,7 @@ function pickModel(
 
 		const listTheme: ListTheme = {
 			selectedText: (t: string) => theme.fg("accent", t),
+			selectedHeading: (t: string) => theme.bg("selectedBg", theme.fg("text", t)),
 			description: (t: string) => theme.fg("muted", t),
 			scrollInfo: (t: string) => theme.fg("dim", t),
 			noMatch: (t: string) => theme.fg("warning", t),
@@ -381,9 +382,9 @@ function pickModel(
 		overlay: true,
 		overlayOptions: {
 			anchor: "center",
-			width: "92%",
-			maxHeight: "90%",
-			margin: 1,
+			width: "99%",
+			maxHeight: "99%",
+			margin: 0,
 		},
 	}).then(async (result) => {
 		if (!result) return; // Esc — keep the current model

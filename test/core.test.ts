@@ -18,6 +18,7 @@ import {
 
 const plainTheme: ListTheme = {
 	selectedText: (t) => t,
+	selectedHeading: (t) => `[selected]${t}`,
 	description: (t) => t,
 	scrollInfo: (t) => t,
 	noMatch: (t) => t,
@@ -65,51 +66,34 @@ const makeList = (groups: ModelGroup[], maxLines = 100): ListResult => {
 	return { list, events };
 };
 
-test("row model: up/down visits headers and items in visual order", () => {
+test("row model: up/down skips expanded headers and visits models in visual order", () => {
 	const { list, events } = makeList([group("a", ["a1", "a2"]), group("b", ["b1"])]);
 	list.setSelectedValue("a1");
-	assert.equal(list.getSelectedItem()?.value, "a1");
-
-	list.handleInput("\x1B[B"); // down → a2
+	list.handleInput("\x1B[B");
 	assert.equal(list.getSelectedItem()?.value, "a2");
-	list.handleInput("\x1B[B"); // down → header b
-	assert.equal(list.getSelectedItem(), null);
-	assert.equal(list.isGroupFocused(), true);
-	list.handleInput("\x1B[B"); // down → b1
+	list.handleInput("\x1B[B");
 	assert.equal(list.getSelectedItem()?.value, "b1");
-	assert.deepEqual(events.selected, ["a2", "header", "b1"]);
-
-	list.handleInput("\x1B[A"); // up → header b
-	assert.equal(list.getSelectedItem(), null);
-	list.handleInput("\x1B[A"); // up → a2
+	list.handleInput("\x1B[A");
 	assert.equal(list.getSelectedItem()?.value, "a2");
+	assert.deepEqual(events.selected, ["a2", "b1", "a2"]);
 });
 
 test("row model: up/down wraps without traps", () => {
 	const { list } = makeList([group("a", ["a1"]), group("b", ["b1"])]);
 	list.setSelectedValue("a1");
-	list.handleInput("\x1B[A"); // up → header a
-	assert.equal(list.getSelectedItem(), null);
-	list.handleInput("\x1B[A"); // up wraps to last row: b1
+	list.handleInput("\x1B[A");
 	assert.equal(list.getSelectedItem()?.value, "b1");
-	list.handleInput("\x1B[B"); // down wraps to first row: header a
-	assert.equal(list.getSelectedItem(), null);
-	list.handleInput("\x1B[B"); // → a1
+	list.handleInput("\x1B[B");
 	assert.equal(list.getSelectedItem()?.value, "a1");
 });
 
-test("row model: enter on header toggles collapse and never selects", () => {
-	const { list, events } = makeList([group("a", ["a1"]), group("b", ["b1"])]);
-	list.setSelectedValue("a1");
-	list.handleInput("\x1B[A"); // header a
-	events.select.length = 0;
+test("row model: enter on a collapsed header expands it and never selects", () => {
+	const collapsed = { ...group("a", ["a1"]), initiallyCollapsed: true };
+	const { list, events } = makeList([collapsed, group("b", ["b1"])]);
+	assert.equal(list.isGroupFocused(), true);
 	list.handleInput("\r");
 	assert.deepEqual(events.select, []);
-	const lines = list.render(40).join("\n");
-	assert.match(lines, /▸ a/); // collapsed
-	assert.doesNotMatch(lines, /a1/);
-
-	list.handleInput("\r"); // expand again
+	assert.equal(list.getSelectedItem()?.value, "a1");
 	assert.match(list.render(40).join("\n"), /a1/);
 });
 
@@ -154,14 +138,28 @@ test("row model: ctrl+g collapses all onto a header, then expands all", () => {
 	assert.match(list.render(40).join("\n"), /b1/);
 });
 
-test("row model: action keys do nothing while a header is focused", () => {
-	const { list, events } = makeList([group("a", ["a1"])]);
+test("row model: action keys do nothing while a collapsed header is focused", () => {
+	const { list, events } = makeList([{ ...group("a", ["a1"]), initiallyCollapsed: true }]);
 	list.handleInput("\x06"); // ctrl+f
 	list.handleInput("\x08"); // ctrl+h
 	list.handleInput("\x13"); // ctrl+s
-	list.handleInput("\r"); // enter toggles, never selects
 	assert.deepEqual(events.select, []);
 	assert.deepEqual(events.selected.filter((v) => v !== "header"), []);
+});
+
+test("row model: only the focused collapsed header is highlighted", () => {
+	const groups = [
+		{ ...group("a", ["a1"]), initiallyCollapsed: true },
+		{ ...group("b", ["b1"]), initiallyCollapsed: true },
+	];
+	const { list } = makeList(groups);
+	let lines = list.render(40);
+	assert.equal(lines.filter((line) => line.includes("[selected]")).length, 1);
+	assert.match(lines.find((line) => line.includes("[selected]"))!, /a/);
+	list.handleInput("\x1B[B");
+	lines = list.render(40);
+	assert.equal(lines.filter((line) => line.includes("[selected]")).length, 1);
+	assert.match(lines.find((line) => line.includes("[selected]"))!, /b/);
 });
 
 test("row model: empty list renders no-match and ignores navigation", () => {
@@ -174,16 +172,14 @@ test("row model: empty list renders no-match and ignores navigation", () => {
 
 test("row model: positionLabel counts items by cursor index, never 0/N", () => {
 	const { list } = makeList([group("a", ["a1", "a2"]), group("b", ["b1"])]);
-	// Header focused (row 0): position 0 is acceptable, but selecting an item
-	// must never report 0/N — rows are recreated per access, so identity
-	// lookups would always miss.
+	// Expanded headers are skipped; item positions must never report 0/N.
 	list.setSelectedValue("a1");
 	assert.equal(list.positionLabel(), "1/3");
 	list.setSelectedValue("a2");
 	assert.equal(list.positionLabel(), "2/3");
 	list.setSelectedValue("b1");
 	assert.equal(list.positionLabel(), "3/3");
-	list.handleInput("\x1B[A"); // up → header b (2 items at or before the cursor)
+	list.handleInput("\x1B[A"); // up → a2
 	assert.equal(list.positionLabel(), "2/3");
 });
 
@@ -249,28 +245,26 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
-	assert.deepEqual(groups.map((g) => g.id), ["favorites", "recent", "provider:openai", "provider:anthropic", "hidden"]);
+	assert.deepEqual(groups.map((g) => g.id), ["favorites", "provider:openai", "provider:anthropic", "hidden"]);
 	// hidden model appears ONLY in the hidden group
 	const nonHiddenGroups = groups.slice(0, 3).flatMap((g) => g.items.map((i) => i.value));
 	assert.ok(!nonHiddenGroups.includes("openai/gpt-4"));
 });
 
-test("buildGroups: recent group is deduped across default/current/recents and capped", () => {
-	const ordered = [model("p", "m1"), model("p", "m2"), model("p", "m3"), model("p", "m4")];
+test("buildGroups: ordinary mode does not render a Recent group", () => {
 	const groups = buildGroups({
-		ordered,
+		ordered: [model("p", "m1"), model("p", "m2")],
 		query: "",
 		manageMode: null,
 		favoriteKeys: [],
 		hiddenKeys: [],
-		recentKeys: ["p/m1", "p/m2", "p/m3"],
+		recentKeys: ["p/m1", "p/m2"],
 		defaultKey: "p/m1",
-		currentKey: "p/m1",
-		maxRecents: 2,
+		currentKey: "p/m2",
+		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
-	const recent = groups.find((g) => g.id === "recent")!;
-	assert.deepEqual(recent.items.map((i) => i.value), ["p/m1", "p/m2"]);
+	assert.equal(groups.some((group) => group.id === "recent"), false);
 });
 
 test("buildGroups: search shows each match once in its provider group", () => {
@@ -289,6 +283,26 @@ test("buildGroups: search shows each match once in its provider group", () => {
 	});
 	assert.deepEqual(groups.map((g) => g.title), ["openai"]);
 	assert.deepEqual(groups[0]!.items.map((i) => i.value), ["openai/gpt-5", "openai/gpt-4"]);
+});
+
+test("buildGroups: a hidden search match stays behind a collapsed Hidden group", () => {
+	const groups = buildGroups({
+		ordered: [model("p", "visible"), model("p", "secret")],
+		query: "secret",
+		manageMode: null,
+		favoriteKeys: [],
+		hiddenKeys: ["p/secret"],
+		recentKeys: [],
+		defaultKey: "",
+		currentKey: "",
+		maxRecents: 0,
+		itemOf: (m) => item(keyOf(m)),
+	});
+	assert.deepEqual(groups.map((group) => group.id), ["hidden"]);
+	assert.equal(groups[0]!.initiallyCollapsed, true);
+	const { list } = makeList(groups);
+	assert.equal(list.isGroupFocused(), true);
+	assert.doesNotMatch(list.render(40).join("\n"), /p\/secret/);
 });
 
 test("buildGroups: management mode shows provider groups only, including hidden", () => {
@@ -313,19 +327,17 @@ test("listLineBudget: caps on large terminals and shrinks on small ones", () => 
 	// Large terminal: hard cap of 26 list lines.
 	assert.equal(listLineBudget(100), 26);
 	assert.equal(listLineBudget(undefined), listLineBudget(24));
-	// Normal terminal: budget fits inside the 90% overlay after chrome.
+	// Normal terminal: budget fits inside the 99% overlay after chrome.
 	const budget = listLineBudget(24);
-	assert.equal(budget, Math.floor(24 * 0.9) - 10);
+	assert.equal(budget, Math.floor(24 * 0.99) - 8);
 	assert.ok(budget >= 1);
 	// Small terminal: budget never exceeds what the overlay can show, so the
 	// overlay must not truncate the picker.
 	for (const rows of [8, 10, 12, 14, 16]) {
 		const small = listLineBudget(rows);
 		assert.ok(small >= 1, `rows=${rows} budget=${small}`);
-		assert.ok(small <= Math.floor(rows * 0.9) - 10 + 26, `rows=${rows} budget=${small} not conservative`);
+		assert.equal(small, Math.max(1, Math.floor(rows * 0.99) - 8));
 		assert.ok(small <= 26);
-		// and strictly less than the old formula would allow for tiny screens
-		assert.ok(small <= Math.max(1, rows - 12 + 0), `rows=${rows}`);
 	}
 	assert.equal(listLineBudget(0), listLineBudget(24));
 	assert.equal(listLineBudget(-3), listLineBudget(24));
@@ -340,17 +352,17 @@ const withTempDir = (fn: (dir: string) => void): void => {
 	}
 };
 
-test("store: entries round-trip, dedupe on load, and cap at 15", () => {
+test("store: recents are capped but favorites and hidden entries are not truncated", () => {
 	withTempDir((dir) => {
 		const store = createStore(dir);
-		const entries = Array.from({ length: 20 }, (_, i) => ({ provider: "p", id: `m${i}` }));
+		const entries = Array.from({ length: 30 }, (_, i) => ({ provider: "p", id: `m${i}` }));
 		assert.equal(store.saveRecents(entries), true);
-		const loaded = store.loadRecents();
-		assert.equal(loaded.length, 15);
-		assert.equal(loaded[0]!.id, "m0");
+		assert.equal(store.loadRecents().length, 20);
 
-		store.saveFavorites([{ provider: "p", id: "x" }, { provider: "p", id: "x" }]);
-		assert.deepEqual(store.loadFavorites(), [{ provider: "p", id: "x" }, { provider: "p", id: "x" }]);
+		assert.equal(store.saveFavorites(entries), true);
+		assert.equal(store.loadFavorites().length, 30);
+		assert.equal(store.saveHidden(entries), true);
+		assert.equal(store.loadHidden().length, 30);
 	});
 });
 

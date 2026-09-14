@@ -32,7 +32,7 @@ interface AgentSettings {
 }
 
 const VALID_REASONS = new Set(["startup", "new", "resume", "fork"]);
-const MAX_PERSISTED_ENTRIES = 15;
+const MAX_RECENT_ENTRIES = 20;
 
 export const keyOf = (m: PickerModel): string => `${m.provider}/${m.id}`;
 
@@ -41,18 +41,17 @@ export function isValidReason(reason: string): boolean {
 }
 
 /**
- * Chrome lines around the list inside the overlay: bottom/top overlay margin,
- * the box border (2), title (1), search input (1), help (2), plus slack for
- * Text padding and fractional-height rounding.
+ * Chrome lines around the list inside the overlay: box border (2), title (1),
+ * search input (1), help (2), plus slack for padding/rounding.
  */
-const OVERLAY_CHROME_LINES = 2 + 2 + 1 + 1 + 2 + 2;
-/** The overlay renders at most 90% of the terminal height (overlayOptions). */
-const OVERLAY_MAX_HEIGHT_FRACTION = 0.9;
+const OVERLAY_CHROME_LINES = 2 + 1 + 1 + 2 + 2;
+/** The overlay renders at most 99% of terminal height (overlayOptions). */
+const OVERLAY_MAX_HEIGHT_FRACTION = 0.99;
 
 /**
  * Conservative rendered-line budget for the list viewport. Everything outside
  * the list (overlay chrome, borders, title, search, help) is fixed, and the
- * overlay itself is capped at 90% of the terminal height — so on small
+ * overlay itself is capped at 99% of the terminal height — so on small
  * terminals the budget shrinks instead of letting the overlay truncate it.
  */
 export function listLineBudget(termRows: number | undefined, fallbackRows = 24, maxLines = 26): number {
@@ -113,7 +112,7 @@ export function createStore(agentDir: string): Store {
 
 	const saveEntries = (path: string, entries: RecentEntry[]): boolean => {
 		try {
-			writeJson(path, entries.slice(0, MAX_PERSISTED_ENTRIES));
+			writeJson(path, entries);
 			return true;
 		} catch {
 			// Optional picker state must never block model selection.
@@ -170,7 +169,7 @@ export function createStore(agentDir: string): Store {
 		loadEntries,
 		saveEntries,
 		loadRecents: () => loadEntries(pathOf("new-model-picker-recents.json")),
-		saveRecents: (entries) => saveEntries(pathOf("new-model-picker-recents.json"), entries),
+		saveRecents: (entries) => saveEntries(pathOf("new-model-picker-recents.json"), entries.slice(0, MAX_RECENT_ENTRIES)),
 		loadFavorites: () => loadEntries(pathOf("new-model-picker-favorites.json")),
 		saveFavorites: (entries) => saveEntries(pathOf("new-model-picker-favorites.json"), entries),
 		loadHidden: () => loadEntries(pathOf("new-model-picker-hidden.json")),
@@ -232,6 +231,7 @@ export interface ModelGroup {
 	title: string;
 	items: ListItem[];
 	collapsible: boolean;
+	initiallyCollapsed?: boolean;
 }
 
 export type ManageMode = "favorites" | "hidden" | null;
@@ -286,7 +286,9 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		.filter((m): m is PickerModel => !!m)
 		.filter((m) => matchesQuery(m, m.name ?? "", q));
 	const hiddenGroup: ModelGroup[] =
-		hidden.length > 0 ? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true }] : [];
+		hidden.length > 0
+			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true, initiallyCollapsed: q.length > 0 }]
+			: [];
 
 	if (q) return [...groups, ...hiddenGroup];
 
@@ -298,18 +300,12 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		favorites.length > 0 ? [{ id: "favorites", title: "Favorites", items: favorites.map(itemOf), collapsible: true }] : [];
 
 	const preferredKeys = [defaultKey, currentKey, ...recentKeys].filter((key, index, keys) => !!key && visible(key) && keys.indexOf(key) === index);
-	const recentModels = preferredKeys
-		.map((key) => byKey.get(key))
-		.filter((m): m is PickerModel => !!m)
-		.slice(0, Math.max(0, maxRecents));
-	const recentGroup: ModelGroup[] =
-		recentModels.length > 0 ? [{ id: "recent", title: "Recent", items: recentModels.map(itemOf), collapsible: true }] : [];
-
-	return [...favoriteGroup, ...recentGroup, ...groups, ...hiddenGroup];
+	return [...favoriteGroup, ...groups, ...hiddenGroup];
 }
 
 export interface ListTheme {
 	selectedText: (text: string) => string;
+	selectedHeading: (text: string) => string;
 	description: (text: string) => string;
 	scrollInfo: (text: string) => string;
 	noMatch: (text: string) => string;
@@ -348,6 +344,9 @@ export class GroupedModelList {
 		this.groups = groups;
 		this.maxLines = maxLines;
 		this.theme = theme;
+		for (const group of groups) if (group.initiallyCollapsed) this.collapsed.add(group.id);
+		const firstFocusable = this.rows.findIndex((row) => this.isFocusable(row));
+		this.index = firstFocusable >= 0 ? firstFocusable : 0;
 	}
 
 	private get rows(): Row[] {
@@ -358,6 +357,10 @@ export class GroupedModelList {
 			}
 			return [header];
 		});
+	}
+
+	private isFocusable(row: Row): boolean {
+		return row.kind === "item" || (row.group.collapsible && this.collapsed.has(row.group.id));
 	}
 
 	// Rows are recreated on every `rows` access, so position must be derived
@@ -404,12 +407,14 @@ export class GroupedModelList {
 
 	private toggleGroup(group: ModelGroup): void {
 		if (!group.collapsible) return;
-		if (this.collapsed.has(group.id)) this.collapsed.delete(group.id);
+		const expanding = this.collapsed.has(group.id);
+		if (expanding) this.collapsed.delete(group.id);
 		else this.collapsed.add(group.id);
-		// Keep the cursor on the group's header row across the toggle.
 		const rows = this.rows;
-		const headerRow = rows.find((row) => row.kind === "header" && row.group.id === group.id);
-		this.index = headerRow ? rows.indexOf(headerRow) : Math.min(this.index, rows.length - 1);
+		const target = expanding
+			? rows.find((row) => row.kind === "item" && row.group.id === group.id)
+			: rows.find((row) => row.kind === "header" && row.group.id === group.id);
+		this.index = target ? rows.indexOf(target) : Math.min(this.index, rows.length - 1);
 		this.notifySelection();
 		this.onStateChange?.();
 	}
@@ -422,7 +427,13 @@ export class GroupedModelList {
 		}
 		if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
 			const direction = matchesKey(data, Key.up) ? -1 : 1;
-			this.index = (this.index + direction + rows.length) % rows.length;
+			for (let step = 1; step <= rows.length; step++) {
+				const candidate = (this.index + direction * step + rows.length) % rows.length;
+				if (this.isFocusable(rows[candidate]!)) {
+					this.index = candidate;
+					break;
+				}
+			}
 			this.notifySelection();
 			this.onStateChange?.();
 			return;
@@ -434,28 +445,22 @@ export class GroupedModelList {
 				this.toggleGroup(group);
 			} else if (group.collapsible && matchesKey(data, Key.right) && this.collapsed.has(group.id)) {
 				this.toggleGroup(group);
-				// After expanding, land on the group's first item.
-				const after = this.rows;
-				const firstItem = after.find((candidate) => candidate.kind === "item" && candidate.group.id === group.id);
-				if (firstItem) {
-					this.index = after.indexOf(firstItem);
-					this.notifySelection();
-					this.onStateChange?.();
-				}
 			}
 			return;
 		}
 		if (matchesKey(data, Key.ctrl("g"))) {
 			const shouldExpand = this.allGroupsCollapsed();
+			const focusedGroupId = rows[this.index]?.group.id;
 			for (const group of this.groups) if (group.collapsible) shouldExpand ? this.collapsed.delete(group.id) : this.collapsed.add(group.id);
 			const after = this.rows;
-			// After collapsing all, move the cursor to the nearest header.
 			if (!shouldExpand) {
-				const current = after[Math.min(this.index, after.length - 1)];
-				const target = current?.kind === "header" ? current : after.find((candidate) => candidate.kind === "header");
+				const target = after.find((candidate) => candidate.kind === "header" && candidate.group.id === focusedGroupId)
+					?? after.find((candidate) => candidate.kind === "header");
 				this.index = target ? after.indexOf(target) : 0;
 			} else {
-				this.index = Math.min(this.index, after.length - 1);
+				const target = after.find((candidate) => candidate.kind === "item" && candidate.group.id === focusedGroupId)
+					?? after.find((candidate) => candidate.kind === "item");
+				this.index = target ? after.indexOf(target) : 0;
 			}
 			this.notifySelection();
 			this.onStateChange?.();
@@ -524,9 +529,11 @@ export class GroupedModelList {
 	private renderRow(row: Row, width: number): string[] {
 		if (row.kind === "header") {
 			const collapsed = row.group.collapsible && this.collapsed.has(row.group.id);
+			const focusedRow = this.rows[this.index];
+			const focused = focusedRow?.kind === "header" && focusedRow.group.id === row.group.id;
 			const marker = row.group.collapsible ? (collapsed ? "▸" : "▾") : " ";
 			const label = `${marker} ${row.group.title}`;
-			return [this.isGroupFocused() ? this.theme.selectedText(`→ ${label}`) : this.theme.heading(`  ${label}`)];
+			return [focused ? this.theme.selectedHeading(`→ ${label}`) : this.theme.heading(`  ${label}`)];
 		}
 		return this.renderItem(row.item, width);
 	}
