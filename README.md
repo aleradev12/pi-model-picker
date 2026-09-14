@@ -1,70 +1,260 @@
-# pi-model-picker
+# Pi Model Picker
 
-Enhanced Pi model picker extension: a grouped, searchable model chooser shown
-on session start (per config), after `/new`, and via `/model-picker`.
+A grouped, searchable, keyboard-first model picker for
+[Pi](https://github.com/badlogic/pi-mono).
 
-## Layout
+It replaces a long flat model list with provider groups, favorites, hidden
+models, persistent preferences, and a stable full-screen overlay designed for
+both large and small terminals.
 
-- `index.ts` — pi extension glue: session hook, `/model-picker` command,
-  autocomplete wrapper, overlay container, settings/management UI wiring.
-- `core.ts` — pure, testable core: persistence store (injectable agent dir),
-  fuzzy match, group building, and the `GroupedModelList` row-model widget.
-- `test/core.test.ts` — unit tests (`node --test`, Node ≥ 22.18/24 type stripping).
-- `scripts/bundle.mjs` — inlines `core.ts` + `index.ts` into the single-file
-  deployable `dist/new-model-picker.ts` (copy it to `~/.pi/agent/extensions/`).
-- `scripts/check.mjs` — syntax-checks the TS sources via Node's type stripper.
-- `scripts/smoke-bundle.mjs` — imports the deployable bundle and fails if it
-  still depends on `./core.ts`.
+## Features
 
-## Commands
+- Models grouped by provider
+- Fast fuzzy search across provider, model ID, and display name
+- Favorites promoted to the top of search results without duplicate entries
+- Persistent Favorites and Hidden lists
+- Hidden models isolated in a collapsed group at the bottom
+- Dedicated checklist screens for managing Favorites and Hidden models
+- Collapsible provider groups
+- Configurable picker startup behavior
+- Persistent default-model selection
+- Compact context, reasoning, and pricing details for the focused model
+- Centered selection: the list scrolls while the cursor stays in place
+- Full-terminal bordered overlay with small-terminal height adaptation
+- Mouse-free, keyboard-first operation
+
+## Requirements
+
+- Pi with TypeScript extension support
+- Node.js 22.18 or newer; Node.js 24 is recommended for development
+
+## Installation
+
+> Pi extensions execute with the same system access as Pi. Review third-party
+> extension source before installing it.
+
+### Install from GitHub
+
+After the repository is published, install it as a Pi git package:
 
 ```sh
-npm run verify   # syntax check + tests + bundle + standalone import smoke test
+pi install git:github.com/<owner>/pi-model-picker
 ```
 
-For local development, Pi must load the standalone bundle, not `index.ts`:
+You can pin a tag or commit:
 
 ```sh
-ln -sfn "$PWD/dist/new-model-picker.ts" ~/.pi/agent/extensions/new-model-picker.ts
+pi install git:github.com/<owner>/pi-model-picker@v1.0.0
 ```
 
-`index.ts` imports `./core.ts`; Pi resolves relative imports from the extension
-entry path, so linking `index.ts` directly into `~/.pi/agent/extensions/` will
-not work.
+Pi clones the repository, installs its dependencies, runs the package prepare
+script, and loads `dist/new-model-picker.ts` from the package manifest.
 
-## UX summary
+### Install from a local checkout
 
-- ↑/↓ moves through models and collapsed group headers with wrap-around;
-  expanded headers are labels, not focus targets. A focused collapsed header
-  is highlighted, and Enter/→ expands it onto its first model.
-- The focused row stays centered while content scrolls beneath it. Blank rows
-  are added near the beginning/end so the cursor never drifts vertically.
-- Model rows are indented relative to headings and the focused model uses the
-  same selected background treatment as a focused collapsed heading. Favorites
-  include a compact muted provider suffix because that group mixes providers.
-- ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
-  all groups; Enter applies; Esc cancels.
-- A fixed two-line panel below search shows compact context/reasoning and pricing
-  for the focused model without changing the list height. Model rows contain no
-  pricing. The title owns the position count (`Pick a model (n/m)`, or
-  `Manage Favorites/Hidden models (n/m)`).
-- Ctrl+S sets the configured default (canonical model id in `settings.json`),
-  Ctrl+F/Ctrl+H toggle favorite/hidden for the highlighted model. After hiding,
-  focus moves to the next distinct model, or the previous one at the end.
-  Hiding the default or active model is refused.
-- Ctrl+O opens Settings: toggle startup/new triggers or open full checkbox
-  management for Favorites/Hidden (provider groups only, hidden included,
-  no unused search field, Enter toggles without exiting, Esc returns to Settings).
-- The bordered overlay uses the full terminal viewport so the underlying screen
-  cannot bleed through at the right or bottom edge.
-- Ordinary mode has no Recent group. Hidden models appear only in the final
-  Hidden group, which starts collapsed on every picker opening and after search.
+```sh
+git clone <repository-url>
+cd pi-model-picker
+npm install
+npm run verify
+pi install "$PWD"
+```
 
-## Persistence
+For extension development, you can instead link the generated standalone file:
 
-State lives in `~/.pi/agent/new-model-picker-{recents,favorites,hidden}.json`.
-Recents are capped at 20; favorites and hidden entries are not truncated.
-Config lives in `~/.pi/agent/new-model-picker.json`, and the
-default model inside pi's `settings.json` (other keys are preserved; a
-malformed settings file is never overwritten). All writes are atomic
-(mkdir + temp file + rename).
+```sh
+ln -sfn "$PWD/dist/new-model-picker.ts" \
+  ~/.pi/agent/extensions/new-model-picker.ts
+```
+
+Do not link `index.ts` directly. It imports `./core.ts`, while the generated
+file in `dist/` is the standalone extension entry expected by Pi.
+
+Reload Pi after rebuilding:
+
+```text
+/reload
+```
+
+## Usage
+
+Open the picker manually:
+
+```text
+/model-picker
+```
+
+By default it also opens on application startup and after creating a new
+session. These behaviors can be changed from the picker Settings screen.
+
+### Main picker
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move through models and collapsed groups |
+| `Enter` | Select the focused model or expand a collapsed group |
+| `←` | Collapse the current model's group |
+| `→` | Expand a focused collapsed group |
+| `Ctrl+G` | Collapse or expand all groups |
+| `Ctrl+S` | Save the focused model as Pi's default |
+| `Ctrl+F` | Add or remove the focused model from Favorites |
+| `Ctrl+H` | Hide or unhide the focused model |
+| `Ctrl+O` | Open Settings |
+| `Esc` | Close the picker |
+
+Typing in the main picker filters the list. Favorite matches appear first in a
+Favorites group, followed by the remaining provider groups. A matching hidden
+model remains behind the collapsed Hidden group.
+
+The configured default model is selected initially. Until navigation begins,
+the title explains that pressing `Enter` will keep/select the default.
+
+### Navigation behavior
+
+Expanded group headings are visual labels and are skipped by `↑`/`↓`. Collapsed
+group headings are focusable, use the selected background color, and can be
+expanded with `Enter` or `→`.
+
+The focused row stays vertically centered. Near the beginning or end of the
+list, blank rows are inserted instead of moving the cursor away from its fixed
+position.
+
+After hiding a model with `Ctrl+H`, focus moves to the next distinct visible
+model. If there is no next model, it moves to the previous one.
+
+### Settings and checklist modes
+
+Press `Ctrl+O` to open Settings:
+
+- Show picker on application startup
+- Show picker on new session
+- Manage Favorites
+- Manage Hidden models
+
+The management screens display provider groups with `[ ]` and `[x]` checkboxes.
+Press `Enter` to toggle an entry without closing the screen. These screens do
+not show a search field. Press `Esc` to return to Settings.
+
+The active or configured-default model cannot be newly hidden. A previously
+persisted hidden active/default model remains reachable so it can be unhidden.
+
+## Display
+
+Model rows contain the model ID and optional display name. Models are indented
+under their group heading. Favorites also include a compact muted provider
+suffix because the group can mix providers:
+
+```text
+  ▾ Favorites
+    gpt-5.6-sol — GPT-5.6 Sol  · openai-codex
+  → GLM-5.3-Flash             · zai-api
+```
+
+A fixed two-line panel below the search field shows details without changing
+the list height:
+
+```text
+272k ctx · reasoning: medium
+↑Read 5$ · ↓Write 30$ · Cache 0.5$
+```
+
+Models without reasoning support show `reasoning: none`.
+
+## Configuration
+
+Optional configuration is stored at:
+
+```text
+~/.pi/agent/new-model-picker.json
+```
+
+Default configuration:
+
+```json
+{
+  "reasons": ["startup", "new"],
+  "maxRecents": 5
+}
+```
+
+`reasons` accepts Pi session-start reasons such as `startup`, `new`, `resume`,
+and `fork`. Startup and new-session behavior can be changed from Settings.
+
+`maxRecents` is retained for state compatibility, although recent models are no
+longer rendered as a separate group.
+
+## Persistent state
+
+The extension stores user state in the Pi agent directory:
+
+```text
+~/.pi/agent/new-model-picker-favorites.json
+~/.pi/agent/new-model-picker-hidden.json
+~/.pi/agent/new-model-picker-recents.json
+~/.pi/agent/new-model-picker.json
+```
+
+The configured default model is written to Pi's existing
+`~/.pi/agent/settings.json`. Other settings are preserved. A malformed settings
+file is never overwritten.
+
+Favorites and Hidden entries are not truncated. Recent state is capped at 20
+entries. Writes are atomic: parent directories are created as needed, data is
+written to a temporary file, and then renamed into place.
+
+## Development
+
+Install dependencies:
+
+```sh
+npm install
+```
+
+Run the complete verification pipeline:
+
+```sh
+npm run verify
+```
+
+This runs:
+
+1. TypeScript syntax checks for `core.ts` and `index.ts`
+2. Node's test suite
+3. Standalone bundle generation
+4. A smoke test through Pi's real extension loader
+
+Useful individual commands:
+
+```sh
+npm test
+npm run check
+npm run bundle
+npm run smoke:bundle
+```
+
+The generated extension is:
+
+```text
+dist/new-model-picker.ts
+```
+
+## Project structure
+
+```text
+index.ts                    Pi lifecycle, commands, overlay, and UI wiring
+core.ts                     Grouping, navigation, rendering, and persistence
+scripts/bundle.mjs          Standalone extension bundle generator
+scripts/check.mjs           Source syntax checks
+scripts/smoke-bundle.mjs    Real Pi-loader smoke test
+test/core.test.ts           Navigation, grouping, rendering, and store tests
+```
+
+## Verification philosophy
+
+Unit tests cover the pure row model, centered viewport, group transitions,
+search ordering, hidden/favorite persistence, and settings safety. The bundle
+smoke test intentionally uses Pi's actual `loadExtensions()` implementation so
+parser and loader incompatibilities are caught before installation.
+
+For visual changes, also test the picker interactively in both a tall terminal
+and a heavily height-constrained terminal.
