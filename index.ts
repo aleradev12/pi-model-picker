@@ -466,6 +466,7 @@ function pickModel(
 	let hiddenKeys = loadHidden()
 		.map(entryKey)
 		.filter((key, index, keys) => keys.indexOf(key) === index && available.some((model) => keyOf(model) === key));
+	let manageMode: "favorites" | "hidden" | null = null;
 
 	const byKey = new Map(available.map((model) => [keyOf(model), model]));
 	const ordered = [...available].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
@@ -473,8 +474,9 @@ function pickModel(
 	const labelOf = (m: Model<Api>): string => {
 		const key = keyOf(m);
 		const marker = key === defaultKey ? "[default] " : "";
+		const checkbox = manageMode ? `[${(manageMode === "favorites" ? favoriteKeys : hiddenKeys).includes(key) ? "x" : " "}] ` : "";
 		const name = m.name && m.name !== m.id ? ` — ${m.name}` : "";
-		return `${marker}${m.id}${name}`;
+		return `${checkbox}${marker}${m.id}${name}`;
 	};
 
 	const formatNumber = (value: number): string =>
@@ -502,7 +504,7 @@ function pickModel(
 
 	const groupsFor = (query: string): ModelGroup[] => {
 		const q = query.trim().toLowerCase();
-		const matching = ordered.filter((model) => !hiddenKeys.includes(keyOf(model)) && fuzzyMatch(q, `${keyOf(model)} ${model.name ?? ""}`));
+		const matching = ordered.filter((model) => (manageMode || !hiddenKeys.includes(keyOf(model))) && fuzzyMatch(q, `${keyOf(model)} ${model.name ?? ""}`));
 		const providerGroups = new Map<string, SelectItem[]>();
 		for (const model of matching) {
 			const group = providerGroups.get(model.provider) ?? [];
@@ -517,6 +519,7 @@ function pickModel(
 		}));
 
 		// During search, show each match exactly once in its provider group.
+		if (manageMode) return groups;
 		const hidden = hiddenKeys.map((key) => byKey.get(key)).filter((model): model is Model<Api> => !!model)
 			.filter((model) => fuzzyMatch(q, `${keyOf(model)} ${model.name ?? ""}`));
 		const hiddenGroup = hidden.length > 0 ? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true }] : [];
@@ -640,8 +643,18 @@ function pickModel(
 				ctx.ui.notify(`Default model: ${defaultKey}`, "info");
 				rebuild(search.getValue());
 			};
-			list.onSelect = (item) => done(byKey.get(item.value) ?? null);
-			list.onCancel = () => done(null);
+			list.onSelect = (item) => {
+				if (!manageMode) return done(byKey.get(item.value) ?? null);
+				const keys = manageMode === "favorites" ? favoriteKeys : hiddenKeys;
+				const nextKeys = keys.includes(item.value) ? keys.filter((key) => key !== item.value) : [item.value, ...keys];
+				if (manageMode === "favorites") { favoriteKeys = nextKeys; saveFavorites(nextKeys.map((key) => ({ provider: byKey.get(key)!.provider, id: byKey.get(key)!.id }))); }
+				else { hiddenKeys = nextKeys; saveHidden(nextKeys.map((key) => ({ provider: byKey.get(key)!.provider, id: byKey.get(key)!.id }))); }
+				rebuild(search.getValue());
+			};
+			list.onCancel = () => {
+				if (manageMode) { manageMode = null; rebuild(""); }
+				else done(null);
+			};
 			return list;
 		};
 
@@ -691,7 +704,12 @@ function pickModel(
 					else if (matchesKey(data, Key.up)) settingsIndex = (settingsIndex + 3) % 4;
 					else if (matchesKey(data, Key.down)) settingsIndex = (settingsIndex + 1) % 4;
 					else if (matchesKey(data, Key.enter) && settingsIndex < 2) toggleAutostart(settingsIndex === 0 ? "startup" : "new");
-					else if (matchesKey(data, Key.enter)) { settingsOpen = false; ctx.ui.notify(settingsIndex === 2 ? "Use Ctrl+F to manage favorites" : "Use Ctrl+H to manage hidden models", "info"); }
+					else if (matchesKey(data, Key.enter)) {
+						manageMode = settingsIndex === 2 ? "favorites" : "hidden";
+						settingsOpen = false;
+						search.setValue("");
+						rebuild("");
+					}
 				} else if (data === "\x03") {
 					// ctrl+c
 					done(null);
