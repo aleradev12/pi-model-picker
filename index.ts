@@ -343,6 +343,14 @@ function pickModel(
 						row(3, false, "Manage Hidden models"),
 						theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
 					];
+				} else if (manageMode) {
+					// Management is a checkbox list, not a filterable picker.
+					content = [
+						...title.render(innerWidth),
+						...details.render(innerWidth),
+						...listSlot.render(innerWidth),
+						...help.render(innerWidth),
+					];
 				} else {
 					content = container.render(innerWidth);
 				}

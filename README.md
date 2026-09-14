@@ -54,7 +54,7 @@ not work.
   Hiding the default or active model is refused.
 - Ctrl+O opens Settings: toggle startup/new triggers or open full checkbox
   management for Favorites/Hidden (provider groups only, hidden included,
-  Enter toggles without exiting, Esc returns to Settings).
+  no unused search field, Enter toggles without exiting, Esc returns to Settings).
 - The bordered overlay uses the full terminal viewport so the underlying screen
   cannot bleed through at the right or bottom edge.
 - Ordinary mode has no Recent group. Hidden models appear only in the final
