@@ -269,6 +269,11 @@ class GroupedModelList {
 		return !!this.focusedGroupId;
 	}
 
+	positionLabel(): string {
+		const visible = this.visibleItems;
+		return visible.length > 0 ? `${this.selectedIndex + 1}/${visible.length}` : "0/0";
+	}
+
 	allGroupsCollapsed(): boolean {
 		const collapsible = this.groups.filter((group) => group.collapsible);
 		return collapsible.length > 0 && collapsible.every((group) => this.collapsed.has(group.id));
@@ -314,6 +319,12 @@ class GroupedModelList {
 		const labelText = hasDefaultMarker ? item.label.slice("[default] ".length) : item.label;
 		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
 		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${modelLabel}` : modelLabel;
+		const inlineDetails = (item as SelectItem & { inlineDetails?: string[] }).inlineDetails;
+		if (selected && inlineDetails) {
+			lines.push(`${prefix}${label}`);
+			lines.push(...inlineDetails.map((line) => this.theme.description(`│       ${line}`)));
+			return;
+		}
 		const description = item.description ? `  ${item.description}` : "";
 		if (visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
 			lines.push(`${prefix}${label}${this.theme.description(description)}`);
@@ -333,12 +344,8 @@ class GroupedModelList {
 		if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
 			if (visible.length === 0 && !this.focusedGroupId) return;
 			if (this.focusedGroupId) {
-				const collapsedGroups = this.groups.filter((group) => this.collapsed.has(group.id));
 				const direction = matchesKey(data, Key.up) ? -1 : 1;
-				if (collapsedGroups.length > 1) {
-					const index = collapsedGroups.findIndex((group) => group.id === this.focusedGroupId);
-					this.focusedGroupId = collapsedGroups[(index + direction + collapsedGroups.length) % collapsedGroups.length]?.id;
-				} else if (visible.length > 0) {
+				if (visible.length > 0) {
 					this.focusedGroupId = undefined;
 					this.selectedIndex = direction > 0 ? 0 : visible.length - 1;
 					this.onSelectionChange?.(visible[this.selectedIndex]!.item);
@@ -487,7 +494,11 @@ function pickModel(
 		value: keyOf(model),
 		label: labelOf(model),
 		description: descriptionOf(model),
-	});
+		inlineDetails: [
+			`${model.provider} · ${formatContext(model.contextWindow)} · ${model.reasoning ? `reasoning: available · default: ${defaultThinkingLevel}` : "reasoning: unavailable"}`,
+			`↑ Read: ${formatNumber(model.cost.input)}$   ↓ Write: ${formatNumber(model.cost.output)}$   Cache: ${formatNumber(model.cost.cacheRead)}$ / 1M tokens`,
+		],
+	} as SelectItem & { inlineDetails: string[] });
 
 	const groupsFor = (query: string): ModelGroup[] => {
 		const q = query.trim().toLowerCase();
@@ -589,7 +600,10 @@ function pickModel(
 			if (!query.trim()) list.setSelectedValue(defaultKey);
 			updateDetails(list.getSelectedItem());
 			updateHelp(list);
-			list.onSelectionChange = (item) => updateDetails(item);
+			list.onSelectionChange = (item) => {
+				updateDetails(item);
+				title.setText(theme.fg("accent", theme.bold(`Pick a model (${list.positionLabel()})`));
+			};
 			list.onStateChange = () => updateHelp(list);
 			list.onToggleHidden = (item) => {
 				if (!byKey.has(item.value)) return;
@@ -639,7 +653,6 @@ function pickModel(
 		container.addChild(title);
 		container.addChild(search);
 		container.addChild(listSlot);
-		container.addChild(details);
 		container.addChild(help);
 
 		const rebuild = (query: string) => {
