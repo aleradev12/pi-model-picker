@@ -34,8 +34,9 @@ not work.
 
 ## UX summary
 
-- ↑/↓ moves through one ordered row model — group headers and models are all
-  reachable, with wrap-around and no traps. Enter on a header collapses/expands.
+- ↑/↓ moves through models and collapsed group headers with wrap-around;
+  expanded headers are labels, not focus targets. A focused collapsed header
+  is highlighted, and Enter/→ expands it onto its first model.
 - ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
   all groups; Enter applies; Esc cancels.
 - The selected model shows wrapped inline details; the title owns the position
@@ -46,12 +47,14 @@ not work.
 - Ctrl+O opens Settings: toggle startup/new triggers or open full checkbox
   management for Favorites/Hidden (provider groups only, hidden included,
   Enter toggles without exiting, Esc returns to Settings).
-- Ordinary mode excludes hidden models everywhere and keeps a Hidden group last.
+- Ordinary mode has no Recent group. Hidden models appear only in the final
+  Hidden group; matching hidden search results keep that group collapsed.
 
 ## Persistence
 
-State lives in `~/.pi/agent/new-model-picker-{recents,favorites,hidden}.json`
-(entries capped at 15), config in `~/.pi/agent/new-model-picker.json`, and the
+State lives in `~/.pi/agent/new-model-picker-{recents,favorites,hidden}.json`.
+Recents are capped at 20; favorites and hidden entries are not truncated.
+Config lives in `~/.pi/agent/new-model-picker.json`, and the
 default model inside pi's `settings.json` (other keys are preserved; a
 malformed settings file is never overwritten). All writes are atomic
 (mkdir + temp file + rename).

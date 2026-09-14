@@ -255,8 +255,9 @@ const matchesQuery = (model: PickerModel, name: string, q: string): boolean => f
 /**
  * Builds the display groups:
  *  - management mode: provider groups only, hidden models included;
- *  - ordinary mode: Favorites, Recent, provider groups, Hidden (last);
- *  - search: every match once in its provider group (+ Hidden group).
+ *  - ordinary mode: Favorites, provider groups, Hidden (last);
+ *  - search: visible matches by provider; hidden matches stay in a collapsed
+ *    Hidden group.
  */
 export function buildGroups(input: GroupingInput): ModelGroup[] {
 	const { ordered, query, manageMode, favoriteKeys, hiddenKeys, recentKeys, defaultKey, currentKey, maxRecents, itemOf } = input;
@@ -317,9 +318,9 @@ const matchesCancel = (data: string): boolean => matchesKey(data, Key.escape) ||
 type Row = { kind: "header"; group: ModelGroup } | { kind: "item"; item: ListItem; group: ModelGroup };
 
 /**
- * Grouped model list with a single ordered row model: every group header and
- * every item is a navigable row, so Up/Down always moves to the visually
- * adjacent row — no focus traps, no teleporting collapsed groups.
+ * Grouped model list with one display row model. Items and collapsed headers
+ * are focusable; expanded headers remain visible labels and are skipped by
+ * Up/Down.
  *
  * Rendering is budgeted in rendered lines (selected rows may span several),
  * and everything is scrolled through one viewport window.

@@ -2,8 +2,8 @@
  * new-model-picker — model picker after /new, on startup, and via /model-picker.
  *
  * Behavior:
- *  - Grouped list (Favorites / Recent / providers / Hidden) with collapsible
- *    provider headers; every header and model is reachable with ↑/↓.
+ *  - Grouped list (Favorites / providers / Hidden) with collapsible headers;
+ *    ↑/↓ visits models and collapsed headers, skipping expanded headers.
  *  - Typing filters (fuzzy over provider/id/name); ←/→ collapse/expand groups.
  *  - Selected model shows wrapped inline details; the title owns the count.
  *  - Ctrl+O opens settings (startup/new toggles + Favorites/Hidden management);
