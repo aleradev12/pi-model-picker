@@ -291,7 +291,25 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true, initiallyCollapsed: true }]
 			: [];
 
-	if (q) return [...groups, ...hiddenGroup];
+	if (q) {
+		const favoriteMatchKeys = new Set(favoriteKeys.filter((key) => visible(key) && matching.some((model) => keyOf(model) === key)));
+		const favoriteMatches = favoriteKeys
+			.filter((key) => favoriteMatchKeys.has(key))
+			.map((key) => byKey.get(key))
+			.filter((model): model is PickerModel => !!model);
+		const favoriteMatchesGroup: ModelGroup[] = favoriteMatches.length > 0
+			? [{
+				id: "favorites",
+				title: "Favorites",
+				items: favoriteMatches.map((model) => ({ ...itemOf(model), description: `· ${model.provider}` })),
+				collapsible: true,
+			}]
+			: [];
+		const remainingProviderGroups = groups
+			.map((group) => ({ ...group, items: group.items.filter((item) => !favoriteMatchKeys.has(item.value)) }))
+			.filter((group) => group.items.length > 0);
+		return [...favoriteMatchesGroup, ...remainingProviderGroups, ...hiddenGroup];
+	}
 
 	const favorites = favoriteKeys
 		.filter((key) => visible(key))

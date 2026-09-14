@@ -305,7 +305,7 @@ test("buildGroups: ordinary mode does not render a Recent group", () => {
 	assert.equal(groups.some((group) => group.id === "recent"), false);
 });
 
-test("buildGroups: search shows each match once in its provider group", () => {
+test("buildGroups: search prioritizes favorites without duplicating them", () => {
 	const ordered = [model("openai", "gpt-5"), model("openai", "gpt-4"), model("anthropic", "claude")];
 	const groups = buildGroups({
 		ordered,
@@ -319,8 +319,10 @@ test("buildGroups: search shows each match once in its provider group", () => {
 		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
-	assert.deepEqual(groups.map((g) => g.title), ["openai"]);
-	assert.deepEqual(groups[0]!.items.map((i) => i.value), ["openai/gpt-5", "openai/gpt-4"]);
+	assert.deepEqual(groups.map((g) => g.title), ["Favorites", "openai"]);
+	assert.deepEqual(groups[0]!.items.map((i) => i.value), ["openai/gpt-5"]);
+	assert.equal(groups[0]!.items[0]!.description, "· openai");
+	assert.deepEqual(groups[1]!.items.map((i) => i.value), ["openai/gpt-4"]);
 });
 
 test("buildGroups: a hidden search match stays behind a collapsed Hidden group", () => {
