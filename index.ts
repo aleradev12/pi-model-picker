@@ -26,6 +26,7 @@ import {
 	isValidReason,
 	Key,
 	keyOf,
+	listLineBudget,
 	matchesKey,
 	type ListItem,
 	type ListTheme,
@@ -33,7 +34,11 @@ import {
 } from "./core.ts";
 import { Container, Input, Text, visibleWidth } from "@earendil-works/pi-tui";
 
-const AUTOCOMPLETE_UI_MARKER = Symbol.for("new-model-picker.autocomplete-installed");
+// Module-scoped, not Symbol.for: /reload re-evaluates this module (and Pi
+// clears provider wrappers), so the flag resets and the autocomplete wrapper
+// is reliably re-registered — while repeated session_start events within one
+// module instance never accumulate duplicate wrappers.
+let autocompleteRegistered = false;
 const store = createStore(getAgentDir());
 
 type PickerConfig = ReturnType<typeof store.loadConfig>;
@@ -70,6 +75,8 @@ function pickModel(
 	};
 	let recentKeys = dedupeKnown(store.loadRecents()).slice(0, config.maxRecents);
 	let favoriteKeys = dedupeKnown(store.loadFavorites());
+	// Preserve persisted entries, including a previously hidden default/active
+	// model, so it remains reachable in Hidden and can always be unhidden.
 	let hiddenKeys = dedupeKnown(store.loadHidden());
 	let manageMode: ManageMode = null;
 
@@ -163,9 +170,10 @@ function pickModel(
 		const buildList = (query: string): GroupedModelList => {
 			const list = new GroupedModelList(
 				groupsFor(query),
-				// Line budget for the list viewport; the rest of the overlay
-				// chrome (borders, title, search, help, settings) is fixed.
-				() => Math.max(6, Math.min(26, (process.stdout.rows || 24) - 12)),
+				// Conservative line budget: overlay is capped at 90% of the
+				// terminal height and the surrounding chrome (borders, title,
+				// search, help, padding) is fixed — see listLineBudget().
+				() => listLineBudget(process.stdout.rows),
 				listTheme,
 			);
 			// Preserve the prior selection across rebuilds; fall back to the
@@ -190,8 +198,10 @@ function pickModel(
 				} else done(null);
 			};
 			list.onToggleHidden = (item) => {
-				if (!canHide(item.value)) return;
+				// Unhide intent is decided before the canHide guard: a persisted
+				// hidden default/active model must always be unhide-able.
 				const hiding = !hiddenKeys.includes(item.value);
+				if (hiding && !canHide(item.value)) return;
 				hiddenKeys = hiding ? [item.value, ...hiddenKeys] : hiddenKeys.filter((key) => key !== item.value);
 				if (!persistHidden()) return;
 				ctx.ui.notify(hiding ? `Hidden: ${item.value}` : `Shown: ${item.value}`, "info");
@@ -246,8 +256,10 @@ function pickModel(
 
 		const toggleEntry = (value: string): void => {
 			const keys = manageMode === "favorites" ? favoriteKeys : hiddenKeys;
-			if (manageMode === "hidden" && !keys.includes(value) && !canHide(value)) return;
 			const adding = !keys.includes(value);
+			// Only the hiding direction is guarded: unhiding a persisted hidden
+			// default/active model must always work.
+			if (manageMode === "hidden" && adding && !canHide(value)) return;
 			const nextKeys = adding ? [value, ...keys] : keys.filter((key) => key !== value);
 			if (manageMode === "favorites") {
 				favoriteKeys = nextKeys;
@@ -267,6 +279,7 @@ function pickModel(
 		container.addChild(listSlot);
 		container.addChild(help);
 		selectList = buildList("");
+		listSlot.addChild(selectList);
 		updateChrome();
 
 		const rebuild = (query: string) => {
@@ -398,8 +411,8 @@ function pickModel(
 export default function (pi: ExtensionAPI) {
 	// Config is read on every session_start so edits are picked up without /reload.
 	pi.on("session_start", async (event, ctx) => {
-		const ui = ctx.ui as unknown as Record<PropertyKey, unknown>;
-		if (!ui[AUTOCOMPLETE_UI_MARKER]) {
+		if (!autocompleteRegistered) {
+			autocompleteRegistered = true;
 			ctx.ui.addAutocompleteProvider((current) => ({
 				triggerCharacters: [],
 				async getSuggestions(lines, line, col, options) {
@@ -419,7 +432,6 @@ export default function (pi: ExtensionAPI) {
 				applyCompletion: (lines, line, col, item, prefix) => current.applyCompletion(lines, line, col, item, prefix),
 				shouldTriggerFileCompletion: (lines, line, col) => current.shouldTriggerFileCompletion?.(lines, line, col) ?? true,
 			}));
-			ui[AUTOCOMPLETE_UI_MARKER] = true;
 		}
 
 		const config = store.loadConfig();

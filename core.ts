@@ -40,6 +40,27 @@ export function isValidReason(reason: string): boolean {
 	return VALID_REASONS.has(reason);
 }
 
+/**
+ * Chrome lines around the list inside the overlay: bottom/top overlay margin,
+ * the box border (2), title (1), search input (1), help (2), plus slack for
+ * Text padding and fractional-height rounding.
+ */
+const OVERLAY_CHROME_LINES = 2 + 2 + 1 + 1 + 2 + 2;
+/** The overlay renders at most 90% of the terminal height (overlayOptions). */
+const OVERLAY_MAX_HEIGHT_FRACTION = 0.9;
+
+/**
+ * Conservative rendered-line budget for the list viewport. Everything outside
+ * the list (overlay chrome, borders, title, search, help) is fixed, and the
+ * overlay itself is capped at 90% of the terminal height — so on small
+ * terminals the budget shrinks instead of letting the overlay truncate it.
+ */
+export function listLineBudget(termRows: number | undefined, fallbackRows = 24, maxLines = 26): number {
+	const rows = termRows && termRows > 0 ? termRows : fallbackRows;
+	const overlayHeight = Math.max(1, Math.floor(rows * OVERLAY_MAX_HEIGHT_FRACTION));
+	return Math.max(1, Math.min(maxLines, overlayHeight - OVERLAY_CHROME_LINES));
+}
+
 function readJson(path: string): unknown {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
@@ -100,11 +121,14 @@ export function createStore(agentDir: string): Store {
 		}
 	};
 
-	const loadSettings = (): AgentSettings | null => {
+	const loadSettings = (createIfMissing = false): AgentSettings | null => {
 		try {
 			const raw: unknown = readJson(pathOf("settings.json"));
 			return !!raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as AgentSettings) : null;
-		} catch {
+		} catch (error) {
+			// A missing settings.json is not malformed data: callers that write
+			// settings may bootstrap it; readers just see an empty settings file.
+			if (createIfMissing && (error as NodeJS.ErrnoException)?.code === "ENOENT") return {};
 			return null;
 		}
 	};
@@ -170,7 +194,7 @@ export function createStore(agentDir: string): Store {
 		},
 
 		saveConfiguredDefault: (model) => {
-			const settings = loadSettings();
+			const settings = loadSettings(true);
 			// A malformed settings.json is user data — refuse to overwrite it.
 			if (!settings) return false;
 			try {
@@ -336,12 +360,12 @@ export class GroupedModelList {
 		});
 	}
 
-	private rowItemNumber(row: Row | undefined): { position: number; total: number } {
-		const rows = this.rows;
-		const rowIndex = row ? rows.indexOf(row) : -1;
+	// Rows are recreated on every `rows` access, so position must be derived
+	// from the cursor index, never from object identity.
+	private rowItemNumber(rowIndex: number): { position: number; total: number } {
 		let position = 0;
 		let total = 0;
-		rows.forEach((candidate, i) => {
+		this.rows.forEach((candidate, i) => {
 			if (candidate.kind !== "item") return;
 			total++;
 			if (i <= rowIndex) position = total;
@@ -369,7 +393,7 @@ export class GroupedModelList {
 	}
 
 	positionLabel(): string {
-		const { position, total } = this.rowItemNumber(this.rows[this.index]);
+		const { position, total } = this.rowItemNumber(this.index);
 		return `${position}/${total}`;
 	}
 
@@ -479,6 +503,11 @@ export class GroupedModelList {
 		};
 
 		const budget = Math.max(1, this.maxLines());
+		// A selected row may contain wrapped inline details and exceed the entire
+		// viewport on very small terminals. Keep the label and clip excess detail
+		// lines rather than letting the overlay crop its own chrome/border.
+		if (rendered[this.index]!.length >= budget) return rendered[this.index]!.slice(0, budget);
+
 		let { start, end } = fits(budget);
 		const truncated = start > 0 || end < rows.length;
 		if (truncated) ({ start, end } = fits(budget - 1));

@@ -9,6 +9,7 @@ import {
 	fuzzyMatch,
 	GroupedModelList,
 	keyOf,
+	listLineBudget,
 	type ListTheme,
 	type ListItem,
 	type ModelGroup,
@@ -171,6 +172,21 @@ test("row model: empty list renders no-match and ignores navigation", () => {
 	assert.equal(list.getSelectedItem(), null);
 });
 
+test("row model: positionLabel counts items by cursor index, never 0/N", () => {
+	const { list } = makeList([group("a", ["a1", "a2"]), group("b", ["b1"])]);
+	// Header focused (row 0): position 0 is acceptable, but selecting an item
+	// must never report 0/N — rows are recreated per access, so identity
+	// lookups would always miss.
+	list.setSelectedValue("a1");
+	assert.equal(list.positionLabel(), "1/3");
+	list.setSelectedValue("a2");
+	assert.equal(list.positionLabel(), "2/3");
+	list.setSelectedValue("b1");
+	assert.equal(list.positionLabel(), "3/3");
+	list.handleInput("\x1B[A"); // up → header b (2 items at or before the cursor)
+	assert.equal(list.positionLabel(), "2/3");
+});
+
 test("row model: render respects the line budget including selected details", () => {
 	const detailGroup: ModelGroup = {
 		id: "a",
@@ -183,6 +199,21 @@ test("row model: render respects the line budget including selected details", ()
 	const lines = list.render(60);
 	assert.ok(lines.length <= 5, `expected <= 5 lines, got ${lines.length}`);
 	assert.ok(lines.some((line) => line.includes("a3")), "selected row must stay visible");
+});
+
+test("row model: oversized selected details are clipped to the line budget", () => {
+	const detailGroup: ModelGroup = {
+		id: "a",
+		title: "a",
+		collapsible: true,
+		items: [{ value: "a/1", label: "model", inlineDetails: ["first detail", "second detail", "third detail"] }],
+	};
+	const { list } = makeList([detailGroup], 2);
+	list.setSelectedValue("a/1");
+	const lines = list.render(40);
+	assert.equal(lines.length, 2);
+	assert.match(lines[0]!, /model/);
+	assert.match(lines[1]!, /first detail/);
 });
 
 test("row model: selected inline details are wrapped to width", () => {
@@ -278,6 +309,28 @@ test("buildGroups: management mode shows provider groups only, including hidden"
 	assert.deepEqual(groups[0]!.items.map((i) => i.value), ["openai/gpt-5", "openai/gpt-4"]);
 });
 
+test("listLineBudget: caps on large terminals and shrinks on small ones", () => {
+	// Large terminal: hard cap of 26 list lines.
+	assert.equal(listLineBudget(100), 26);
+	assert.equal(listLineBudget(undefined), listLineBudget(24));
+	// Normal terminal: budget fits inside the 90% overlay after chrome.
+	const budget = listLineBudget(24);
+	assert.equal(budget, Math.floor(24 * 0.9) - 10);
+	assert.ok(budget >= 1);
+	// Small terminal: budget never exceeds what the overlay can show, so the
+	// overlay must not truncate the picker.
+	for (const rows of [8, 10, 12, 14, 16]) {
+		const small = listLineBudget(rows);
+		assert.ok(small >= 1, `rows=${rows} budget=${small}`);
+		assert.ok(small <= Math.floor(rows * 0.9) - 10 + 26, `rows=${rows} budget=${small} not conservative`);
+		assert.ok(small <= 26);
+		// and strictly less than the old formula would allow for tiny screens
+		assert.ok(small <= Math.max(1, rows - 12 + 0), `rows=${rows}`);
+	}
+	assert.equal(listLineBudget(0), listLineBudget(24));
+	assert.equal(listLineBudget(-3), listLineBudget(24));
+});
+
 const withTempDir = (fn: (dir: string) => void): void => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-picker-test-"));
 	try {
@@ -362,6 +415,20 @@ test("store: saveConfiguredDefault persists canonical id and preserves other key
 	});
 });
 
+
+test("store: saveConfiguredDefault creates settings.json when missing", () => {
+	withTempDir((dir) => {
+		const store = createStore(dir);
+		assert.equal(store.getConfiguredDefaultKey([]), ""); // reads fine without the file
+		assert.equal(store.saveConfiguredDefault(model("openai", "gpt-5")), true);
+		const saved = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+		assert.equal(saved.defaultProvider, "openai");
+		assert.equal(saved.defaultModel, "gpt-5");
+		// And a subsequent save preserves the bootstrapped file.
+		assert.equal(store.saveConfiguredDefault(model("p", "m2")), true);
+		assert.equal(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).defaultModel, "m2");
+	});
+});
 
 test("store: saveConfiguredDefault refuses to overwrite malformed settings", () => {
 	withTempDir((dir) => {
