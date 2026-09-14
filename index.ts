@@ -139,6 +139,7 @@ function pickModel(
 		let uiMode: "pick" | "settings" = "pick";
 		let settingsIndex = 0;
 		let selectedValue = "";
+		let showDefaultHint = true;
 		let selectList: GroupedModelList;
 
 		const updateDetails = (item: ListItem | null): void => {
@@ -161,7 +162,10 @@ function pickModel(
 				return;
 			}
 			const heading = manageMode === "favorites" ? "Manage Favorites" : manageMode === "hidden" ? "Manage Hidden models" : "Pick a model";
-			title.setText(theme.fg("accent", theme.bold(`${heading} (${selectList.positionLabel()})`)));
+			const defaultHint = !manageMode && showDefaultHint && selectList.getSelectedItem()?.value === defaultKey
+				? " - press Enter to default"
+				: "";
+			title.setText(theme.fg("accent", theme.bold(`${heading} (${selectList.positionLabel()})${defaultHint}`)));
 			const groupAction = selectList.isGroupFocused() ? "←→ expand group" : "←→ collapse group";
 			const manageAction = manageMode ? "enter toggle | esc back" : "";
 			help.setText(
@@ -186,6 +190,7 @@ function pickModel(
 			list.setSelectedValue(selectedValue || defaultKey);
 			selectedValue = list.getSelectedItem()?.value ?? selectedValue;
 			list.onSelectionChange = (item) => {
+				showDefaultHint = false;
 				if (item) selectedValue = item.value;
 				updateDetails(item);
 				updateChrome();
