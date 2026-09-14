@@ -264,6 +264,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 	const q = query.trim().toLowerCase();
 
 	const byKey = new Map(ordered.map((m) => [keyOf(m), m]));
+	const itemWithProvider = (model: PickerModel): ListItem => ({ ...itemOf(model), description: `· ${model.provider}` });
 	const visible = (key: string): boolean => manageMode !== null || !hiddenKeys.includes(key);
 
 	const matching = ordered.filter((m) => visible(keyOf(m)) && matchesQuery(m, m.name ?? "", q));
@@ -288,7 +289,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		.filter((m) => matchesQuery(m, m.name ?? "", q));
 	const hiddenGroup: ModelGroup[] =
 		hidden.length > 0
-			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemOf), collapsible: true, initiallyCollapsed: true }]
+			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemWithProvider), collapsible: true, initiallyCollapsed: true }]
 			: [];
 
 	if (q) {
@@ -301,7 +302,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 			? [{
 				id: "favorites",
 				title: "Favorites",
-				items: favoriteMatches.map((model) => ({ ...itemOf(model), description: `· ${model.provider}` })),
+				items: favoriteMatches.map(itemWithProvider),
 				collapsible: true,
 			}]
 			: [];
@@ -319,7 +320,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		? [{
 			id: "favorites",
 			title: "Favorites",
-			items: favorites.map((model) => ({ ...itemOf(model), description: `· ${model.provider}` })),
+			items: favorites.map(itemWithProvider),
 			collapsible: true,
 		}]
 		: [];

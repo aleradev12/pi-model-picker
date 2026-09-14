@@ -284,6 +284,7 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 	assert.deepEqual(groups.map((g) => g.id), ["favorites", "provider:openai", "provider:anthropic", "hidden"]);
 	assert.equal(groups[0]!.items[0]!.description, "· openai");
 	assert.equal(groups.at(-1)!.initiallyCollapsed, true);
+	assert.equal(groups.at(-1)!.items[0]!.description, "· openai");
 	// hidden model appears ONLY in the hidden group
 	const nonHiddenGroups = groups.slice(0, 3).flatMap((g) => g.items.map((i) => i.value));
 	assert.ok(!nonHiddenGroups.includes("openai/gpt-4"));
@@ -340,6 +341,7 @@ test("buildGroups: a hidden search match stays behind a collapsed Hidden group",
 	});
 	assert.deepEqual(groups.map((group) => group.id), ["hidden"]);
 	assert.equal(groups[0]!.initiallyCollapsed, true);
+	assert.equal(groups[0]!.items[0]!.description, "· p");
 	const { list } = makeList(groups);
 	assert.equal(list.isGroupFocused(), true);
 	assert.doesNotMatch(list.render(40).join("\n"), /p\/secret/);

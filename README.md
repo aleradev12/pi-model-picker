@@ -141,8 +141,8 @@ persisted hidden active/default model remains reachable so it can be unhidden.
 ## Display
 
 Model rows contain the model ID and optional display name. Models are indented
-under their group heading. Favorites also include a compact muted provider
-suffix because the group can mix providers:
+under their group heading. Favorites and Hidden also include a compact muted
+provider suffix because those groups can mix providers:
 
 ```text
   ▾ Favorites
