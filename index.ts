@@ -572,7 +572,7 @@ function pickModel(
 				? "←→ show group"
 				: "←→ collapse group";
 			const allAction = list.allGroupsCollapsed() ? "ctrl+g show all groups" : "ctrl+g collapse all groups";
-			help.setText(theme.fg("dim", `↑↓ select | enter apply | ctrl+s set default | ctrl+f favorite | ctrl+h hide | esc cancel\n${groupAction} | ${allAction} | ctrl+1 startup | ctrl+2 new | ◆ default | ● active | ★ recent`));
+			help.setText(theme.fg("dim", `↑↓ select | enter apply | ctrl+s set default | ctrl+o settings | esc cancel\n${groupAction} | ${allAction} | ◆ default | ● active | ★ recent`));
 		};
 
 		const buildList = (query: string): GroupedModelList => {
@@ -631,6 +631,8 @@ function pickModel(
 			return list;
 		};
 
+		let settingsOpen = false;
+		let settingsIndex = 0;
 		let selectList = buildList("");
 		listSlot.addChild(selectList);
 
@@ -649,7 +651,16 @@ function pickModel(
 		return {
 			render: (width: number) => {
 				const innerWidth = Math.max(1, width - 2);
-				const content = container.render(innerWidth);
+				const config = loadConfig();
+				const settingsLines = [
+					theme.fg("accent", theme.bold("Settings")),
+					`${settingsIndex === 0 ? "→ " : "  "}[${config.reasons.includes("startup") ? "x" : " "}] Show picker on application startup`,
+					`${settingsIndex === 1 ? "→ " : "  "}[${config.reasons.includes("new") ? "x" : " "}] Show picker on new session`,
+					`${settingsIndex === 2 ? "→ " : "  "}Manage Favorites (Ctrl+F in picker)`,
+					`${settingsIndex === 3 ? "→ " : "  "}Manage Hidden models (Ctrl+H in picker)`,
+					theme.fg("dim", "↑↓ select | enter toggle/open | esc back"),
+				];
+				const content = settingsOpen ? settingsLines : container.render(innerWidth);
 				const horizontal = "─".repeat(innerWidth);
 				return [
 					borderColor(`╭${horizontal}╮`),
@@ -662,14 +673,17 @@ function pickModel(
 			},
 			invalidate: () => container.invalidate(),
 			handleInput: (data: string) => {
-				// Навигация/подтверждение/отмена — списку, печатаемые символы — поиску
-				if (data === "\x03") {
+				if (settingsOpen) {
+					if (matchesKey(data, Key.escape)) settingsOpen = false;
+					else if (matchesKey(data, Key.up)) settingsIndex = (settingsIndex + 3) % 4;
+					else if (matchesKey(data, Key.down)) settingsIndex = (settingsIndex + 1) % 4;
+					else if (matchesKey(data, Key.enter) && settingsIndex < 2) toggleAutostart(settingsIndex === 0 ? "startup" : "new");
+					else if (matchesKey(data, Key.enter)) { settingsOpen = false; ctx.ui.notify(settingsIndex === 2 ? "Use Ctrl+F to manage favorites" : "Use Ctrl+H to manage hidden models", "info"); }
+				} else if (data === "\x03") {
 					// ctrl+c
 					done(null);
-				} else if (matchesKey(data, Key.ctrl("1"))) {
-					toggleAutostart("startup");
-				} else if (matchesKey(data, Key.ctrl("2"))) {
-					toggleAutostart("new");
+				} else if (matchesKey(data, Key.ctrl("o"))) {
+					settingsOpen = true;
 				} else if (
 					matchesKey(data, Key.up) ||
 					matchesKey(data, Key.down) ||
@@ -763,30 +777,4 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	const registerAutostartCommand = (name: string, reason: "startup" | "new") => {
-		pi.registerCommand(name, {
-			description: "Set picker autostart: on, off, or toggle",
-			handler: async (args, ctx) => {
-				const config = loadConfig();
-				const enabled = config.reasons.includes(reason);
-				const action = args.trim().toLowerCase() || "toggle";
-				if (!["on", "off", "toggle"].includes(action)) {
-					ctx.ui.notify(`Usage: /${name} [on|off|toggle]`, "warning");
-					return;
-				}
-				const nextEnabled = action === "on" || (action === "toggle" && !enabled);
-				config.reasons = nextEnabled
-					? [...new Set([...config.reasons, reason])]
-					: config.reasons.filter((value) => value !== reason);
-				if (!saveConfig(config)) {
-					ctx.ui.notify("new-model-picker: could not save configuration", "error");
-					return;
-				}
-				ctx.ui.notify(`Picker on ${reason}: ${nextEnabled ? "on" : "off"}`, "info");
-			},
-		});
-	};
-
-	registerAutostartCommand("model-picker-startup", "startup");
-	registerAutostartCommand("model-picker-new", "new");
 }
