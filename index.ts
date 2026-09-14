@@ -310,10 +310,10 @@ class GroupedModelList {
 		const groupIndent = nested ? "  " : "";
 		const prefix = width >= 2 ? `${groupIndent}${selected ? "→ " : "  "}` : "";
 		const labelWidth = Math.max(1, width - prefix.length);
-		const hasDefaultMarker = item.label.startsWith("◆ ");
-		const labelText = hasDefaultMarker ? item.label.slice(2) : item.label;
+		const hasDefaultMarker = item.label.startsWith("[default] ");
+		const labelText = hasDefaultMarker ? item.label.slice("[default] ".length) : item.label;
 		const modelLabel = selected ? this.theme.selectedText(labelText) : labelText;
-		const label = hasDefaultMarker ? `${this.theme.description("◆ ")}${modelLabel}` : modelLabel;
+		const label = hasDefaultMarker ? `${this.theme.description("[default] ")}${modelLabel}` : modelLabel;
 		const description = item.description ? `  ${item.description}` : "";
 		if (visibleWidth(item.label) + visibleWidth(description) <= labelWidth) {
 			lines.push(`${prefix}${label}${this.theme.description(description)}`);
@@ -334,9 +334,15 @@ class GroupedModelList {
 			if (visible.length === 0 && !this.focusedGroupId) return;
 			if (this.focusedGroupId) {
 				const collapsedGroups = this.groups.filter((group) => this.collapsed.has(group.id));
-				const index = collapsedGroups.findIndex((group) => group.id === this.focusedGroupId);
 				const direction = matchesKey(data, Key.up) ? -1 : 1;
-				this.focusedGroupId = collapsedGroups[(index + direction + collapsedGroups.length) % collapsedGroups.length]?.id;
+				if (collapsedGroups.length > 1) {
+					const index = collapsedGroups.findIndex((group) => group.id === this.focusedGroupId);
+					this.focusedGroupId = collapsedGroups[(index + direction + collapsedGroups.length) % collapsedGroups.length]?.id;
+				} else if (visible.length > 0) {
+					this.focusedGroupId = undefined;
+					this.selectedIndex = direction > 0 ? 0 : visible.length - 1;
+					this.onSelectionChange?.(visible[this.selectedIndex]!.item);
+				}
 				this.onStateChange?.();
 				return;
 			}
@@ -459,7 +465,7 @@ function pickModel(
 
 	const labelOf = (m: Model<Api>): string => {
 		const key = keyOf(m);
-		const marker = key === defaultKey ? "◆ " : "";
+		const marker = key === defaultKey ? "[default] " : "";
 		const name = m.name && m.name !== m.id ? ` — ${m.name}` : "";
 		return `${marker}${m.id}${name}`;
 	};
