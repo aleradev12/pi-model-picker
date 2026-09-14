@@ -493,36 +493,42 @@ export class GroupedModelList {
 		if (rows.length === 0) return [this.theme.noMatch("  No matches")];
 
 		const rendered = rows.map((row) => this.renderRow(row, width));
-		const fits = (budget: number): { start: number; end: number } => {
-			let used = rendered[this.index]!.length;
-			let start = this.index;
-			let end = this.index + 1;
-			while (start > 0 && used + rendered[start - 1]!.length <= budget) {
-				start--;
-				used += rendered[start]!.length;
-			}
-			while (end < rows.length && used + rendered[end]!.length <= budget) {
-				used += rendered[end]!.length;
-				end++;
-			}
-			return { start, end };
-		};
-
 		const budget = Math.max(1, this.maxLines());
-		// A selected row may contain wrapped inline details and exceed the entire
-		// viewport on very small terminals. Keep the label and clip excess detail
-		// lines rather than letting the overlay crop its own chrome/border.
-		if (rendered[this.index]!.length >= budget) return rendered[this.index]!.slice(0, budget);
+		const selectedHeight = rendered[this.index]!.length;
+		// A selected row may contain wrapped details and exceed the viewport.
+		if (selectedHeight >= budget) return rendered[this.index]!.slice(0, budget);
 
-		let { start, end } = fits(budget);
-		const truncated = start > 0 || end < rows.length;
-		if (truncated) ({ start, end } = fits(budget - 1));
+		// Reserve one line for a neutral scroll indicator whenever all rows do not
+		// fit. In the middle of a long list, keep the selected row about 40% down
+		// the viewport; near either edge, backfill naturally without blank rows.
+		const totalLines = rendered.reduce((sum, lines) => sum + lines.length, 0);
+		const contentBudget = totalLines > budget ? budget - 1 : budget;
+		const targetBefore = Math.floor(Math.max(0, contentBudget - selectedHeight) * 0.4);
+		let start = this.index;
+		let before = 0;
+		while (start > 0 && before + rendered[start - 1]!.length <= targetBefore) {
+			start--;
+			before += rendered[start]!.length;
+		}
+
+		let end = this.index + 1;
+		let used = before + selectedHeight;
+		while (end < rows.length && used + rendered[end]!.length <= contentBudget) {
+			used += rendered[end]!.length;
+			end++;
+		}
+		// At the end of the list, use spare space above instead of rendering blanks.
+		while (start > 0 && used + rendered[start - 1]!.length <= contentBudget) {
+			start--;
+			used += rendered[start]!.length;
+		}
 
 		const lines: string[] = [];
 		for (let i = start; i < end; i++) lines.push(...rendered[i]!);
+		const truncated = start > 0 || end < rows.length;
 		if (truncated) {
 			const hidden = rows.length - (end - start);
-			lines.push(this.theme.scrollInfo(`  … ${hidden} more (↑↓ to scroll)`));
+			lines.push(this.theme.scrollInfo(`  … ${hidden} hidden (↑↓ to scroll)`));
 		}
 		return lines;
 	}

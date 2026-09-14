@@ -183,6 +183,24 @@ test("row model: positionLabel counts items by cursor index, never 0/N", () => {
 	assert.equal(list.positionLabel(), "2/3");
 });
 
+test("row model: long-list selection stays at a 40% viewport anchor", () => {
+	const ids = Array.from({ length: 20 }, (_, index) => `m${index + 1}`);
+	const { list } = makeList([group("models", ids)], 8);
+	const selectedLine = () => list.render(50).findIndex((line) => line.startsWith("→ "));
+
+	for (const id of ["m7", "m8", "m9", "m10", "m11", "m12"]) {
+		list.setSelectedValue(id);
+		assert.equal(selectedLine(), 2, `expected stable anchor for ${id}`);
+	}
+
+	list.setSelectedValue("m1");
+	assert.equal(selectedLine(), 1, "top edge includes the expanded group heading");
+	list.setSelectedValue("m20");
+	const endLines = list.render(50);
+	assert.ok(selectedLine() > 2, "bottom edge backfills above without blank rows");
+	assert.equal(endLines.length, 8);
+});
+
 test("row model: render respects the line budget including selected details", () => {
 	const detailGroup: ModelGroup = {
 		id: "a",

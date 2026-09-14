@@ -37,6 +37,9 @@ not work.
 - ↑/↓ moves through models and collapsed group headers with wrap-around;
   expanded headers are labels, not focus targets. A focused collapsed header
   is highlighted, and Enter/→ expands it onto its first model.
+- In long lists the focused row stays near 40% of the viewport while content
+  scrolls beneath it. At the beginning/end the viewport clamps naturally,
+  without blank filler rows.
 - ←/→ collapse/expand the current group (works during search); Ctrl+G toggles
   all groups; Enter applies; Esc cancels.
 - A fixed two-line panel below search shows compact context/reasoning and pricing
