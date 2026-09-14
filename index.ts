@@ -41,12 +41,12 @@ import { Container, Input, Text, visibleWidth } from "@earendil-works/pi-tui";
 let autocompleteRegistered = false;
 const store = createStore(getAgentDir());
 
-type PickerConfig = ReturnType<typeof store.loadConfig>;
+type LoadedPickerConfig = ReturnType<typeof store.loadConfig>;
 
 function pickModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	config: PickerConfig,
+	config: LoadedPickerConfig,
 	includeCurrentInRecents = false,
 ): Promise<void> {
 	// The picker is a TUI-only feature.
