@@ -45,13 +45,13 @@ export function isValidReason(reason: string): boolean {
  * search input (1), fixed model details (2), help (2), plus slack.
  */
 const OVERLAY_CHROME_LINES = 2 + 1 + 1 + 2 + 2 + 2;
-/** The overlay renders at most 99% of terminal height (overlayOptions). */
-const OVERLAY_MAX_HEIGHT_FRACTION = 0.99;
+/** The overlay may use the full terminal height (overlayOptions). */
+const OVERLAY_MAX_HEIGHT_FRACTION = 1;
 
 /**
  * Conservative rendered-line budget for the list viewport. Everything outside
  * the list (overlay chrome, borders, title, search, help) is fixed, and the
- * overlay itself is capped at 99% of the terminal height — so on small
+ * overlay may use the full terminal height — so on small
  * terminals the budget shrinks instead of letting the overlay truncate it.
  */
 export function listLineBudget(termRows: number | undefined, fallbackRows = 24, maxLines = 26): number {

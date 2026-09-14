@@ -97,17 +97,9 @@ function pickModel(
 	const formatContext = (tokens: number): string =>
 		tokens >= 1_000_000 ? `${formatNumber(tokens / 1_000_000)}m ctx` : `${Math.round(tokens / 1_000)}k ctx`;
 
-	const descriptionOf = (m: Model<Api>): string => {
-		// Keep the resting row compact; context/reasoning live in focused details.
-		let text = `$ R${formatNumber(m.cost.input)} W${formatNumber(m.cost.output)} C${formatNumber(m.cost.cacheRead)}`;
-		if (!ctx.modelRegistry.hasConfiguredAuth(m)) text += " · no auth";
-		return text;
-	};
-
 	const itemOf = (model: Model<Api>): ListItem => ({
 		value: keyOf(model),
 		label: labelOf(model),
-		description: descriptionOf(model),
 	});
 
 	const groupsFor = (query: string) =>
@@ -127,11 +119,13 @@ function pickModel(
 	return ctx.ui.custom<Model<Api> | null>((tui, theme, _kb, done) => {
 		const container = new Container();
 		const borderColor = (s: string) => theme.fg("accent", s);
-		const title = new Text(theme.fg("accent", theme.bold("Pick a model")));
+		const title = new Text(theme.fg("accent", theme.bold("Pick a model")), 1, 0);
 		const search = new Input({ placeholder: "Filter (provider / model / name)…" });
-		const details = new Text("\n");
+		// Keep this component exactly two rows tall, including on group headers.
+		const emptyDetails = "\u200b\n\u200b";
+		const details = new Text(emptyDetails, 1, 0);
 		const listSlot = new Container();
-		const help = new Text("");
+		const help = new Text("", 1, 0);
 
 		const listTheme: ListTheme = {
 			selectedText: (t: string) => theme.fg("accent", t),
@@ -150,15 +144,13 @@ function pickModel(
 		const updateDetails = (item: ListItem | null): void => {
 			const model = item ? byKey.get(item.value) : undefined;
 			if (!model) {
-				details.setText("\n");
+				details.setText(emptyDetails);
 				return;
 			}
-			const reasoning = model.reasoning
-				? `reasoning: available · default: ${defaultThinkingLevel}`
-				: "reasoning: unavailable";
+			const reasoning = model.reasoning ? defaultThinkingLevel : "none";
 			details.setText(theme.fg("muted", [
-				`  ${model.provider} · ${formatContext(model.contextWindow)} · ${reasoning}`,
-				`  ↑ Read: ${formatNumber(model.cost.input)}$   ↓ Write: ${formatNumber(model.cost.output)}$   Cache: ${formatNumber(model.cost.cacheRead)}$ / 1M tokens`,
+				`${formatContext(model.contextWindow)} · reasoning: ${reasoning}`,
+				`↑Read ${formatNumber(model.cost.input)}$ · ↓Write ${formatNumber(model.cost.output)}$ · Cache ${formatNumber(model.cost.cacheRead)}$`,
 			].join("\n")));
 		};
 
@@ -398,8 +390,8 @@ function pickModel(
 		overlay: true,
 		overlayOptions: {
 			anchor: "center",
-			width: "99%",
-			maxHeight: "99%",
+			width: "100%",
+			maxHeight: "100%",
 			margin: 0,
 		},
 	}).then(async (result) => {

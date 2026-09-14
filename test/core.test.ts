@@ -328,16 +328,16 @@ test("listLineBudget: caps on large terminals and shrinks on small ones", () => 
 	// Large terminal: hard cap of 26 list lines.
 	assert.equal(listLineBudget(100), 26);
 	assert.equal(listLineBudget(undefined), listLineBudget(24));
-	// Normal terminal: budget fits inside the 99% overlay after chrome.
+	// Normal terminal: budget fits inside the full-height overlay after chrome.
 	const budget = listLineBudget(24);
-	assert.equal(budget, Math.floor(24 * 0.99) - 10);
+	assert.equal(budget, 24 - 10);
 	assert.ok(budget >= 1);
 	// Small terminal: budget never exceeds what the overlay can show, so the
 	// overlay must not truncate the picker.
 	for (const rows of [8, 10, 12, 14, 16]) {
 		const small = listLineBudget(rows);
 		assert.ok(small >= 1, `rows=${rows} budget=${small}`);
-		assert.equal(small, Math.max(1, Math.floor(rows * 0.99) - 10));
+		assert.equal(small, Math.max(1, rows - 10));
 		assert.ok(small <= 26);
 	}
 	assert.equal(listLineBudget(0), listLineBudget(24));
