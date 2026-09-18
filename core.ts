@@ -206,17 +206,36 @@ export function createStore(agentDir: string): Store {
 	};
 }
 
-/** Fuzzy match: every character of query appears in target in order. */
-export function fuzzyMatch(query: string, target: string): boolean {
-	if (!query) return true;
-	let i = 0;
+/**
+ * Scores an in-order fuzzy match. Contiguous matches rank far above sparse
+ * subsequences, so a search for "sol" prefers "GPT-5.6 Sol" over unrelated
+ * models whose provider/id merely happens to contain s…o…l.
+ */
+export function fuzzyScore(query: string, target: string): number | null {
+	if (!query) return 0;
 	const q = query.toLowerCase();
 	const t = target.toLowerCase();
-	for (const ch of t) {
-		if (ch === q[i]) i++;
-		if (i >= q.length) return true;
+	const exactIndex = t.indexOf(q);
+	if (exactIndex >= 0) return 10_000 - exactIndex;
+
+	let queryIndex = 0;
+	let firstIndex = -1;
+	let lastIndex = -1;
+	for (let targetIndex = 0; targetIndex < t.length && queryIndex < q.length; targetIndex++) {
+		if (t[targetIndex] !== q[queryIndex]) continue;
+		if (firstIndex < 0) firstIndex = targetIndex;
+		lastIndex = targetIndex;
+		queryIndex++;
 	}
-	return i >= q.length;
+	if (queryIndex < q.length) return null;
+
+	// A smaller span means that the matched characters are closer together.
+	return 1_000 - Math.min(lastIndex - firstIndex + 1 - q.length, 999);
+}
+
+/** Fuzzy match: every character of query appears in target in order. */
+export function fuzzyMatch(query: string, target: string): boolean {
+	return fuzzyScore(query, target) !== null;
 }
 
 export interface ListItem {
@@ -250,7 +269,25 @@ export interface GroupingInput {
 	itemOf: (model: PickerModel) => ListItem;
 }
 
-const matchesQuery = (model: PickerModel, name: string, q: string): boolean => fuzzyMatch(q, `${model.provider}/${model.id} ${name}`);
+const modelSearchScore = (model: PickerModel, name: string, q: string): number | null => {
+	// Score individual fields first: matching a model name or id is more useful
+	// than a coincidence spanning provider, id, and display name.
+	const fieldScores = [name, model.id, model.provider]
+		.map((field) => fuzzyScore(q, field))
+		.filter((score): score is number => score !== null);
+	const combinedScore = fuzzyScore(q, `${model.provider}/${model.id} ${name}`);
+	return fieldScores.length > 0 ? Math.max(...fieldScores) : combinedScore;
+};
+
+const matchesQuery = (model: PickerModel, name: string, q: string): boolean => modelSearchScore(model, name, q) !== null;
+
+const sortBySearchScore = (models: PickerModel[], q: string): PickerModel[] => {
+	if (!q) return models;
+	return models
+		.map((model, index) => ({ model, index, score: modelSearchScore(model, model.name ?? "", q) ?? -Infinity }))
+		.sort((a, b) => b.score - a.score || a.index - b.index)
+		.map(({ model }) => model);
+};
 
 /**
  * Builds the display groups:
@@ -267,7 +304,10 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 	const itemWithProvider = (model: PickerModel): ListItem => ({ ...itemOf(model), description: `· ${model.provider}` });
 	const visible = (key: string): boolean => manageMode !== null || !hiddenKeys.includes(key);
 
-	const matching = ordered.filter((m) => visible(keyOf(m)) && matchesQuery(m, m.name ?? "", q));
+	const matching = sortBySearchScore(
+		ordered.filter((m) => visible(keyOf(m)) && matchesQuery(m, m.name ?? "", q)),
+		q,
+	);
 	const providerGroups = new Map<string, ListItem[]>();
 	for (const model of matching) {
 		const group = providerGroups.get(model.provider) ?? [];
@@ -283,10 +323,13 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 
 	if (manageMode) return groups;
 
-	const hidden = hiddenKeys
-		.map((key) => byKey.get(key))
-		.filter((m): m is PickerModel => !!m)
-		.filter((m) => matchesQuery(m, m.name ?? "", q));
+	const hidden = sortBySearchScore(
+		hiddenKeys
+			.map((key) => byKey.get(key))
+			.filter((m): m is PickerModel => !!m)
+			.filter((m) => matchesQuery(m, m.name ?? "", q)),
+		q,
+	);
 	const hiddenGroup: ModelGroup[] =
 		hidden.length > 0
 			? [{ id: "hidden", title: "Hidden", items: hidden.map(itemWithProvider), collapsible: true, initiallyCollapsed: true }]

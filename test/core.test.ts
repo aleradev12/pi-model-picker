@@ -7,6 +7,7 @@ import {
 	buildGroups,
 	createStore,
 	fuzzyMatch,
+	fuzzyScore,
 	GroupedModelList,
 	keyOf,
 	listLineBudget,
@@ -46,6 +47,11 @@ test("fuzzyMatch matches in-order subsequences, case-insensitively", () => {
 	assert.equal(fuzzyMatch("ac", "ca"), false);
 	assert.equal(fuzzyMatch("openai", "openai/gpt-5"), true);
 	assert.equal(fuzzyMatch("gpt5", "openai/gpt-5"), true);
+});
+
+test("fuzzyScore strongly prefers contiguous matches", () => {
+	assert.ok(fuzzyScore("sol", "GPT-5.6 Sol")! > fuzzyScore("sol", "baseten/zai-org/GLM-5.3-Flash")!);
+	assert.equal(fuzzyScore("sol", "glm"), null);
 });
 
 test("keyOf uses provider/id", () => {
@@ -304,6 +310,25 @@ test("buildGroups: ordinary mode does not render a Recent group", () => {
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.equal(groups.some((group) => group.id === "recent"), false);
+});
+
+test("buildGroups: search ranks a direct model-name match above sparse provider matches", () => {
+	const groups = buildGroups({
+		ordered: [
+			model("baseten", "zai-org/GLM-5.3-Flash", "GLM 5.3 Flash"),
+			model("openai-codex", "gpt-5.6-sol", "GPT-5.6 Sol"),
+		],
+		query: "sol",
+		manageMode: null,
+		favoriteKeys: [],
+		hiddenKeys: [],
+		recentKeys: [],
+		defaultKey: "",
+		currentKey: "",
+		maxRecents: 5,
+		itemOf: (m) => item(keyOf(m)),
+	});
+	assert.deepEqual(groups.map((group) => group.id), ["provider:openai-codex", "provider:baseten"]);
 });
 
 test("buildGroups: search prioritizes favorites without duplicating them", () => {
