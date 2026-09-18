@@ -185,9 +185,10 @@ function pickModel(
 				() => listLineBudget(process.stdout.rows),
 				listTheme,
 			);
-			// Preserve the prior selection across rebuilds; fall back to the
-			// configured default; otherwise the first row (a group header).
-			list.setSelectedValue(selectedValue || defaultKey);
+			// A non-empty query is ranked, so focus its best match rather than
+			// preserving a previously selected (and potentially weaker) model.
+			// With no query retain the configured/default selection as before.
+			if (!query.trim()) list.setSelectedValue(selectedValue || defaultKey);
 			selectedValue = list.getSelectedItem()?.value ?? selectedValue;
 			list.onSelectionChange = (item) => {
 				showDefaultHint = false;
