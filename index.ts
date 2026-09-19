@@ -8,12 +8,12 @@
  *  - Selected model details use a fixed two-line panel; the title owns the count.
  *  - Ctrl+O opens settings (startup/new toggles + Favorites/Hidden management);
  *    management modes show provider groups only, Enter toggles, Esc goes back.
- *  - Esc cancels; a pick is applied via pi.setModel() and stored in recents.
+ *  - Esc cancels; a pick is applied via pi.setModel().
  *
  * Config ~/.pi/agent/new-model-picker.json (optional):
- *   { "reasons": ["startup", "new"], "maxRecents": 5 }
+ *   { "reasons": ["startup", "new"] }
  *
- * State files: ~/.pi/agent/new-model-picker-{recents,favorites,hidden}.json
+ * State files: ~/.pi/agent/new-model-picker-{favorites,hidden}.json
  */
 
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -47,7 +47,6 @@ function pickModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	config: LoadedPickerConfig,
-	includeCurrentInRecents = false,
 ): Promise<void> {
 	// The picker is a TUI-only feature.
 	if (!ctx.hasUI || ctx.mode !== "tui") return Promise.resolve();
@@ -73,7 +72,6 @@ function pickModel(
 			.map(entryKey)
 			.filter((key) => !seen.has(key) && available.some((m) => keyOf(m) === key) && seen.add(key) !== undefined);
 	};
-	let recentKeys = dedupeKnown(store.loadRecents()).slice(0, config.maxRecents);
 	let favoriteKeys = dedupeKnown(store.loadFavorites());
 	// Preserve persisted entries, including a previously hidden default/active
 	// model, so it remains reachable in Hidden and can always be unhidden.
@@ -109,10 +107,7 @@ function pickModel(
 			manageMode,
 			favoriteKeys,
 			hiddenKeys,
-			recentKeys,
 			defaultKey,
-			currentKey: includeCurrentInRecents ? currentKey : "",
-			maxRecents: config.maxRecents,
 			itemOf,
 		});
 
@@ -429,11 +424,6 @@ function pickModel(
 			ctx.ui.notify(`new-model-picker: no authorization for ${keyOf(result)}`, "error");
 			return;
 		}
-
-		// Store in recents (front), only after a successful apply.
-		const entry = { provider: result.provider, id: result.id };
-		const next = [entry, ...store.loadRecents().filter((e) => !(e.provider === entry.provider && e.id === entry.id))];
-		if (!store.saveRecents(next)) ctx.ui.notify("new-model-picker: could not save recents", "warning");
 
 		ctx.ui.notify(`Model: ${keyOf(result)}`, "info");
 	});

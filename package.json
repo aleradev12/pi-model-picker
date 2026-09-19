@@ -10,6 +10,7 @@
   ],
   "type": "module",
   "description": "A grouped, searchable, keyboard-first model picker for Pi",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aleradev12/pi-model-picker.git"

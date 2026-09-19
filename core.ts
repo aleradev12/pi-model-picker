@@ -17,7 +17,6 @@ export interface PickerModel {
 
 export interface PickerConfig {
 	reasons: string[];
-	maxRecents: number;
 }
 
 export interface RecentEntry {
@@ -32,7 +31,6 @@ interface AgentSettings {
 }
 
 const VALID_REASONS = new Set(["startup", "new", "resume", "fork"]);
-const MAX_RECENT_ENTRIES = 20;
 
 export const keyOf = (m: PickerModel): string => `${m.provider}/${m.id}`;
 
@@ -74,7 +72,6 @@ function writeJson(path: string, data: unknown, pretty: "\t" | 2 = "\t"): void {
 
 export interface Store {
 	configPath: () => string;
-	recentsPath: () => string;
 	favoritesPath: () => string;
 	hiddenPath: () => string;
 	settingsPath: () => string;
@@ -82,8 +79,6 @@ export interface Store {
 	saveConfig: (config: PickerConfig) => boolean;
 	loadEntries: (path: string) => RecentEntry[];
 	saveEntries: (path: string, entries: RecentEntry[]) => boolean;
-	loadRecents: () => RecentEntry[];
-	saveRecents: (entries: RecentEntry[]) => boolean;
 	loadFavorites: () => RecentEntry[];
 	saveFavorites: (entries: RecentEntry[]) => boolean;
 	loadHidden: () => RecentEntry[];
@@ -134,23 +129,18 @@ export function createStore(agentDir: string): Store {
 
 	return {
 		configPath: () => pathOf("new-model-picker.json"),
-		recentsPath: () => pathOf("new-model-picker-recents.json"),
 		favoritesPath: () => pathOf("new-model-picker-favorites.json"),
 		hiddenPath: () => pathOf("new-model-picker-hidden.json"),
 		settingsPath: () => pathOf("settings.json"),
 
 		loadConfig: () => {
-			const defaults: PickerConfig = { reasons: ["startup", "new"], maxRecents: 5 };
+			const defaults: PickerConfig = { reasons: ["startup", "new"] };
 			try {
 				const raw = readJson(pathOf("new-model-picker.json")) as Partial<PickerConfig>;
 				return {
 					reasons: Array.isArray(raw.reasons)
 						? raw.reasons.filter((r): r is string => typeof r === "string" && VALID_REASONS.has(r))
 						: defaults.reasons,
-					maxRecents:
-						typeof raw.maxRecents === "number"
-							? Math.max(0, Math.min(20, Math.floor(raw.maxRecents)))
-							: defaults.maxRecents,
 				};
 			} catch {
 				return defaults;
@@ -168,8 +158,6 @@ export function createStore(agentDir: string): Store {
 
 		loadEntries,
 		saveEntries,
-		loadRecents: () => loadEntries(pathOf("new-model-picker-recents.json")),
-		saveRecents: (entries) => saveEntries(pathOf("new-model-picker-recents.json"), entries.slice(0, MAX_RECENT_ENTRIES)),
 		loadFavorites: () => loadEntries(pathOf("new-model-picker-favorites.json")),
 		saveFavorites: (entries) => saveEntries(pathOf("new-model-picker-favorites.json"), entries),
 		loadHidden: () => loadEntries(pathOf("new-model-picker-hidden.json")),
@@ -262,10 +250,7 @@ export interface GroupingInput {
 	manageMode: ManageMode;
 	favoriteKeys: string[];
 	hiddenKeys: string[];
-	recentKeys: string[];
 	defaultKey: string;
-	currentKey: string;
-	maxRecents: number;
 	itemOf: (model: PickerModel) => ListItem;
 }
 
@@ -297,7 +282,7 @@ const sortBySearchScore = (models: PickerModel[], q: string): PickerModel[] => {
  *    Hidden group.
  */
 export function buildGroups(input: GroupingInput): ModelGroup[] {
-	const { ordered, query, manageMode, favoriteKeys, hiddenKeys, recentKeys, defaultKey, currentKey, maxRecents, itemOf } = input;
+	const { ordered, query, manageMode, favoriteKeys, hiddenKeys, defaultKey, itemOf } = input;
 	const q = query.trim().toLowerCase();
 
 	const byKey = new Map(ordered.map((m) => [keyOf(m), m]));
@@ -368,7 +353,6 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 		}]
 		: [];
 
-	const preferredKeys = [defaultKey, currentKey, ...recentKeys].filter((key, index, keys) => !!key && visible(key) && keys.indexOf(key) === index);
 	return [...favoriteGroup, ...groups, ...hiddenGroup];
 }
 

@@ -281,10 +281,7 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 		manageMode: null,
 		favoriteKeys,
 		hiddenKeys,
-		recentKeys: ["openai/gpt-4"],
 		defaultKey: "anthropic/claude",
-		currentKey: "",
-		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.id), ["favorites", "provider:openai", "provider:anthropic", "hidden"]);
@@ -294,22 +291,6 @@ test("buildGroups: ordinary mode excludes hidden everywhere and keeps Hidden las
 	// hidden model appears ONLY in the hidden group
 	const nonHiddenGroups = groups.slice(0, 3).flatMap((g) => g.items.map((i) => i.value));
 	assert.ok(!nonHiddenGroups.includes("openai/gpt-4"));
-});
-
-test("buildGroups: ordinary mode does not render a Recent group", () => {
-	const groups = buildGroups({
-		ordered: [model("p", "m1"), model("p", "m2")],
-		query: "",
-		manageMode: null,
-		favoriteKeys: [],
-		hiddenKeys: [],
-		recentKeys: ["p/m1", "p/m2"],
-		defaultKey: "p/m1",
-		currentKey: "p/m2",
-		maxRecents: 5,
-		itemOf: (m) => item(keyOf(m)),
-	});
-	assert.equal(groups.some((group) => group.id === "recent"), false);
 });
 
 test("buildGroups: search ranks a direct model-name match above sparse provider matches", () => {
@@ -322,10 +303,7 @@ test("buildGroups: search ranks a direct model-name match above sparse provider 
 		manageMode: null,
 		favoriteKeys: [],
 		hiddenKeys: [],
-		recentKeys: [],
 		defaultKey: "",
-		currentKey: "",
-		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((group) => group.id), ["provider:openai-codex", "provider:baseten"]);
@@ -339,10 +317,7 @@ test("buildGroups: search prioritizes favorites without duplicating them", () =>
 		manageMode: null,
 		favoriteKeys: ["openai/gpt-5"],
 		hiddenKeys: [],
-		recentKeys: ["openai/gpt-5"],
 		defaultKey: "",
-		currentKey: "",
-		maxRecents: 5,
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.title), ["Favorites", "openai"]);
@@ -358,10 +333,7 @@ test("buildGroups: a hidden search match stays behind a collapsed Hidden group",
 		manageMode: null,
 		favoriteKeys: [],
 		hiddenKeys: ["p/secret"],
-		recentKeys: [],
 		defaultKey: "",
-		currentKey: "",
-		maxRecents: 0,
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((group) => group.id), ["hidden"]);
@@ -380,10 +352,7 @@ test("buildGroups: management mode shows provider groups only, including hidden"
 		manageMode: "hidden",
 		favoriteKeys: [],
 		hiddenKeys: ["openai/gpt-4"],
-		recentKeys: [],
-		defaultKey: "",
-		currentKey: "",
-		maxRecents: 5,
+		defaultKey: ""
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.id), ["provider:openai"]);
@@ -419,13 +388,10 @@ const withTempDir = (fn: (dir: string) => void): void => {
 	}
 };
 
-test("store: recents are capped but favorites and hidden entries are not truncated", () => {
+test("store: favorites and hidden entries are not truncated", () => {
 	withTempDir((dir) => {
 		const store = createStore(dir);
 		const entries = Array.from({ length: 30 }, (_, i) => ({ provider: "p", id: `m${i}` }));
-		assert.equal(store.saveRecents(entries), true);
-		assert.equal(store.loadRecents().length, 20);
-
 		assert.equal(store.saveFavorites(entries), true);
 		assert.equal(store.loadFavorites().length, 30);
 		assert.equal(store.saveHidden(entries), true);
@@ -443,25 +409,21 @@ test("store: saving into a missing directory creates it", () => {
 
 test("store: malformed JSON falls back to defaults instead of throwing", () => {
 	withTempDir((dir) => {
-		writeFileSync(join(dir, "new-model-picker-recents.json"), "{not json");
 		writeFileSync(join(dir, "new-model-picker-favorites.json"), "42");
 		writeFileSync(join(dir, "new-model-picker.json"), "{oops");
 		writeFileSync(join(dir, "settings.json"), "{oops");
 		const store = createStore(dir);
-		assert.deepEqual(store.loadRecents(), []);
 		assert.deepEqual(store.loadFavorites(), []);
-		assert.deepEqual(store.loadConfig(), { reasons: ["startup", "new"], maxRecents: 5 });
+		assert.deepEqual(store.loadConfig(), { reasons: ["startup", "new"] });
 		assert.equal(store.getConfiguredDefaultKey([]), "");
 	});
 });
 
-test("store: config validation clamps maxRecents and filters reasons", () => {
+test("store: config validation filters unsupported reasons", () => {
 	withTempDir((dir) => {
 		const store = createStore(dir);
-		assert.equal(store.saveConfig({ reasons: ["startup", "bogus"] as string[], maxRecents: 99 }), true);
-		const loaded = store.loadConfig();
-		assert.deepEqual(loaded.reasons, ["startup"]);
-		assert.equal(loaded.maxRecents, 20);
+		assert.equal(store.saveConfig({ reasons: ["startup", "bogus"] }), true);
+		assert.deepEqual(store.loadConfig().reasons, ["startup"]);
 	});
 });
 
