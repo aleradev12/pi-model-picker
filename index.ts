@@ -24,15 +24,15 @@ import {
 	createStore,
 	GroupedModelList,
 	isValidReason,
-	Key,
 	keyOf,
 	listLineBudget,
-	matchesKey,
+	terminalSafe,
 	type ListItem,
 	type ListTheme,
 	type ManageMode,
+	type PickerModel,
 } from "./core.ts";
-import { Container, Input, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Input, Key, Text, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 
 // Module-scoped, not Symbol.for: /reload re-evaluates this module (and Pi
 // clears provider wrappers), so the flag resets and the autocomplete wrapper
@@ -80,13 +80,14 @@ function pickModel(
 
 	const byKey = new Map(available.map((model) => [keyOf(model), model]));
 	const ordered = [...available].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+	const displayKey = (key: string): string => terminalSafe(key);
 
-	const labelOf = (m: Model<Api>): string => {
+	const labelOf = (m: PickerModel): string => {
 		const key = keyOf(m);
 		const marker = key === defaultKey ? "[default] " : "";
 		const checkbox = manageMode ? `[${(manageMode === "favorites" ? favoriteKeys : hiddenKeys).includes(key) ? "x" : " "}] ` : "";
-		const name = m.name && m.name !== m.id ? ` — ${m.name}` : "";
-		return `${checkbox}${marker}${m.id}${name}`;
+		const name = m.name && m.name !== m.id ? ` — ${terminalSafe(m.name)}` : "";
+		return `${checkbox}${marker}${terminalSafe(m.id)}${name}`;
 	};
 
 	const formatNumber = (value: number): string =>
@@ -95,7 +96,7 @@ function pickModel(
 	const formatContext = (tokens: number): string =>
 		tokens >= 1_000_000 ? `${formatNumber(tokens / 1_000_000)}m ctx` : `${Math.round(tokens / 1_000)}k ctx`;
 
-	const itemOf = (model: Model<Api>): ListItem => ({
+	const itemOf = (model: PickerModel): ListItem => ({
 		value: keyOf(model),
 		label: labelOf(model),
 	});
@@ -217,7 +218,7 @@ function pickModel(
 					return;
 				}
 				selectedValue = fallbackValue;
-				ctx.ui.notify(hiding ? `Hidden: ${item.value}` : `Shown: ${item.value}`, "info");
+				ctx.ui.notify(hiding ? `Hidden: ${displayKey(item.value)}` : `Shown: ${displayKey(item.value)}`, "info");
 				rebuild(search.getValue());
 			};
 			list.onToggleFavorite = (item) => {
@@ -229,7 +230,7 @@ function pickModel(
 					ctx.ui.notify("new-model-picker: could not save favorites", "error");
 					return;
 				}
-				ctx.ui.notify(adding ? `Favorite: ${item.value}` : `Removed favorite: ${item.value}`, "info");
+				ctx.ui.notify(adding ? `Favorite: ${displayKey(item.value)}` : `Removed favorite: ${displayKey(item.value)}`, "info");
 				rebuild(search.getValue());
 			};
 			list.onSaveDefault = (item) => {
@@ -239,7 +240,7 @@ function pickModel(
 					return;
 				}
 				defaultKey = keyOf(model);
-				ctx.ui.notify(`Default model: ${defaultKey}`, "info");
+				ctx.ui.notify(`Default model: ${displayKey(defaultKey)}`, "info");
 				rebuild(search.getValue());
 			};
 			return list;
@@ -261,7 +262,7 @@ function pickModel(
 		const canHide = (key: string): boolean => {
 			if (!byKey.has(key)) return false;
 			if (key === defaultKey || key === currentKey) {
-				ctx.ui.notify(`Cannot hide the default/active model: ${key}`, "warning");
+				ctx.ui.notify(`Cannot hide the default/active model: ${displayKey(key)}`, "warning");
 				return false;
 			}
 			return true;
@@ -415,17 +416,17 @@ function pickModel(
 		if (!result) return; // Esc — keep the current model
 
 		if (keyOf(result) === currentKey) {
-			ctx.ui.notify(`Model unchanged: ${keyOf(result)}`, "info");
+			ctx.ui.notify(`Model unchanged: ${displayKey(keyOf(result))}`, "info");
 			return;
 		}
 
 		const ok = await pi.setModel(result);
 		if (!ok) {
-			ctx.ui.notify(`new-model-picker: no authorization for ${keyOf(result)}`, "error");
+			ctx.ui.notify(`new-model-picker: no authorization for ${displayKey(keyOf(result))}`, "error");
 			return;
 		}
 
-		ctx.ui.notify(`Model: ${keyOf(result)}`, "info");
+		ctx.ui.notify(`Model: ${displayKey(keyOf(result))}`, "info");
 	});
 }
 
@@ -457,13 +458,13 @@ export default function (pi: ExtensionAPI) {
 
 		const config = store.loadConfig();
 		if (!config.reasons.includes(event.reason) || !isValidReason(event.reason)) return;
-		await pickModel(pi, ctx, config, false);
+		await pickModel(pi, ctx, config);
 	});
 
 	pi.registerCommand("model-picker", {
 		description: "Choose a model (enhanced picker)",
 		handler: async (_args, ctx) => {
-			await pickModel(pi, ctx, store.loadConfig(), true);
+			await pickModel(pi, ctx, store.loadConfig());
 		},
 	});
 }

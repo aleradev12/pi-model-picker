@@ -4,7 +4,8 @@
  * it can be unit-tested with a temp directory and synthetic models.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { Key, matchesKey, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
@@ -34,6 +35,15 @@ const VALID_REASONS = new Set(["startup", "new", "resume", "fork"]);
 
 export const keyOf = (m: PickerModel): string => `${m.provider}/${m.id}`;
 
+/**
+ * Removes terminal controls and bidirectional formatting from registry-owned
+ * labels before they reach the TUI. Model metadata may come from third-party
+ * providers and must not be able to emit ANSI/OSC sequences or spoof text.
+ */
+export function terminalSafe(value: string): string {
+	return value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "�");
+}
+
 export function isValidReason(reason: string): boolean {
 	return VALID_REASONS.has(reason);
 }
@@ -62,12 +72,18 @@ function readJson(path: string): unknown {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
-/** Atomic JSON write: mkdir -p the parent, write a temp file, rename over. */
+/** Atomic JSON write with private permissions for user configuration. */
 function writeJson(path: string, data: unknown, pretty: "\t" | 2 = "\t"): void {
-	mkdirSync(dirname(path), { recursive: true });
-	const tmp = `${path}.${process.pid}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(data, null, pretty)}\n`);
-	renameSync(tmp, path);
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+	let renamed = false;
+	try {
+		writeFileSync(tmp, `${JSON.stringify(data, null, pretty)}\n`, { mode: 0o600, flag: "wx" });
+		renameSync(tmp, path);
+		renamed = true;
+	} finally {
+		if (!renamed) rmSync(tmp, { force: true });
+	}
 }
 
 export interface Store {
@@ -286,7 +302,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 	const q = query.trim().toLowerCase();
 
 	const byKey = new Map(ordered.map((m) => [keyOf(m), m]));
-	const itemWithProvider = (model: PickerModel): ListItem => ({ ...itemOf(model), description: `· ${model.provider}` });
+	const itemWithProvider = (model: PickerModel): ListItem => ({ ...itemOf(model), description: `· ${terminalSafe(model.provider)}` });
 	const visible = (key: string): boolean => manageMode !== null || !hiddenKeys.includes(key);
 
 	const matching = sortBySearchScore(
@@ -301,7 +317,7 @@ export function buildGroups(input: GroupingInput): ModelGroup[] {
 	}
 	const groups: ModelGroup[] = [...providerGroups].map(([provider, items]) => ({
 		id: `provider:${provider}`,
-		title: provider,
+		title: terminalSafe(provider),
 		items,
 		collapsible: true,
 	}));
@@ -449,10 +465,12 @@ export class GroupedModelList {
 		const rows = this.rows;
 		const removedValue = this.getSelectedItem()?.value;
 		for (let index = this.index + 1; index < rows.length; index++) {
-			if (rows[index]!.kind === "item" && rows[index]!.item.value !== removedValue) return rows[index]!.item.value;
+			const row = rows[index]!;
+			if (row.kind === "item" && row.item.value !== removedValue) return row.item.value;
 		}
 		for (let index = this.index - 1; index >= 0; index--) {
-			if (rows[index]!.kind === "item" && rows[index]!.item.value !== removedValue) return rows[index]!.item.value;
+			const row = rows[index]!;
+			if (row.kind === "item" && row.item.value !== removedValue) return row.item.value;
 		}
 		return "";
 	}
@@ -605,8 +623,13 @@ export class GroupedModelList {
 		return this.renderItem(row.item, width);
 	}
 
+	invalidate(): void {
+		// Rendering is derived from current state; there is no cached frame.
+	}
+
 	private renderItem(item: ListItem, width: number): string[] {
-		const selected = this.rows[this.index]?.kind === "item" && this.rows[this.index]!.item === item;
+		const selectedRow = this.rows[this.index];
+		const selected = selectedRow?.kind === "item" && selectedRow.item === item;
 		// Models are indented relative to group headings; the arrow occupies the
 		// same model column without shifting the label.
 		const prefix = width >= 4 ? (selected ? "  → " : "    ") : selected ? "→ " : "  ";

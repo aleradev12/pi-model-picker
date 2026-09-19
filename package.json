@@ -1,12 +1,16 @@
 {
   "name": "@aleradev12/pi-model-picker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publishConfig": {
     "access": "public"
   },
   "files": [
     "dist",
-    "README.md"
+    "core.ts",
+    "index.ts",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
   ],
   "type": "module",
   "description": "A grouped, searchable model picker for Pi",
@@ -28,7 +32,7 @@
   },
   "scripts": {
     "test": "node --test test/core.test.ts",
-    "check": "node scripts/check.mjs",
+    "check": "node scripts/check.mjs && tsc --noEmit",
     "bundle": "node scripts/bundle.mjs",
     "smoke:bundle": "node scripts/smoke-bundle.mjs",
     "verify": "npm run check && npm run test && npm run bundle && npm run smoke:bundle",
@@ -42,6 +46,11 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@earendil-works/pi-tui": "^0.85.1"
+    "@earendil-works/pi-tui": "^0.85.1",
+    "@types/node": "^24.13.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

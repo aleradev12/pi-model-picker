@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
 	GroupedModelList,
 	keyOf,
 	listLineBudget,
+	terminalSafe,
 	type ListTheme,
 	type ListItem,
 	type ModelGroup,
@@ -33,6 +34,11 @@ const model = (provider: string, id: string, name = ""): PickerModel => ({
 });
 
 const item = (value: string): ListItem => ({ value, label: value });
+
+test("terminalSafe strips terminal and bidi control sequences", () => {
+	assert.equal(terminalSafe("safe\u001b]52;c;payload\u0007\u202emodel"), "safe�]52;c;payload��model");
+	assert.equal(terminalSafe("normal model"), "normal model");
+});
 const group = (id: string, items: string[], collapsible = true): ModelGroup => ({
 	id,
 	title: id,
@@ -352,7 +358,7 @@ test("buildGroups: management mode shows provider groups only, including hidden"
 		manageMode: "hidden",
 		favoriteKeys: [],
 		hiddenKeys: ["openai/gpt-4"],
-		defaultKey: ""
+		defaultKey: "",
 		itemOf: (m) => item(keyOf(m)),
 	});
 	assert.deepEqual(groups.map((g) => g.id), ["provider:openai"]);
@@ -399,11 +405,12 @@ test("store: favorites and hidden entries are not truncated", () => {
 	});
 });
 
-test("store: saving into a missing directory creates it", () => {
+test("store: saving into a missing directory creates it with private files", () => {
 	withTempDir((dir) => {
 		const store = createStore(join(dir, "agent", "nested"));
 		assert.equal(store.saveHidden([{ provider: "p", id: "m" }]), true);
 		assert.deepEqual(store.loadHidden(), [{ provider: "p", id: "m" }]);
+		assert.equal(statSync(store.hiddenPath()).mode & 0o777, 0o600);
 	});
 });
 
