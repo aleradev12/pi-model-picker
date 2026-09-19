@@ -1,6 +1,6 @@
 # Pi Model Picker
 
-A grouped, keyboard-first model picker extension for [Pi](https://github.com/badlogic/pi-mono).
+A grouped model picker extension for [Pi](https://github.com/badlogic/pi-mono).
 
 [Watch the demo](assets/demo.mp4)
 
@@ -11,7 +11,7 @@ Pi's built-in model list becomes unwieldy when several providers are configured.
 - **Fast search that finds the intended model first.** Fuzzy matching searches provider, ID, and display name, while ranking direct matches above accidental character matches.
 - **A calmer model list.** Group models by provider, hide those you do not use, and pin favorites at the top without duplicate entries.
 - **Useful context at the point of choice.** Focusing a model shows its context window, reasoning level, and input/output/cache pricing.
-- **Works in any terminal.** The full-screen, keyboard-first UI adapts its list height to the available window and keeps the focused row visible.
+- **Works in any terminal.** The full-screen UI adapts its list height to the available window and keeps the focused row visible.
 
 ## Install
 

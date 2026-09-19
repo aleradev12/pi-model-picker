@@ -9,7 +9,7 @@
     "README.md"
   ],
   "type": "module",
-  "description": "A grouped, searchable, keyboard-first model picker for Pi",
+  "description": "A grouped, searchable model picker for Pi",
   "license": "MIT",
   "repository": {
     "type": "git",
