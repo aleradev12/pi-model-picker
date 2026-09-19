@@ -33,18 +33,24 @@ both large and small terminals.
 > Pi extensions execute with the same system access as Pi. Review third-party
 > extension source before installing it.
 
+### Install from npm
+
+```sh
+pi install npm:@aleradev12/pi-model-picker
+```
+
 ### Install from GitHub
 
 After the repository is published, install it as a Pi git package:
 
 ```sh
-pi install git:github.com/<owner>/pi-model-picker
+pi install git:github.com/aleradev12/pi-model-picker
 ```
 
 You can pin a tag or commit:
 
 ```sh
-pi install git:github.com/<owner>/pi-model-picker@v1.0.0
+pi install git:github.com/aleradev12/pi-model-picker@v1.0.0
 ```
 
 Pi clones the repository, installs its dependencies, runs the package prepare

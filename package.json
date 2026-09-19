@@ -1,9 +1,19 @@
 {
-  "name": "pi-model-picker",
+  "name": "@aleradev12/pi-model-picker",
   "version": "1.0.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
   "description": "A grouped, searchable, keyboard-first model picker for Pi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleradev12/pi-model-picker.git"
+  },
   "keywords": [
     "pi-package",
     "pi-extension",
