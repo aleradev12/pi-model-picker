@@ -2,7 +2,11 @@
 
 A grouped, keyboard-first model picker extension for [Pi](https://github.com/badlogic/pi-mono).
 
-[Watch the demo](assets/demo.mp4)
+
+
+https://github.com/user-attachments/assets/ae769fa6-a91b-47ec-9a1b-e828d69d185a
+
+
 
 ## Why use it?
 
