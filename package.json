@@ -23,8 +23,7 @@
   "pi": {
     "extensions": [
       "./dist/new-model-picker.ts"
-    ],
-    "video": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/main/assets/demo.mp4"
+    ]
   },
   "scripts": {
     "test": "node --test test/core.test.ts",
