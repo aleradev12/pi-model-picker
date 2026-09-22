@@ -28,8 +28,8 @@
     "extensions": [
       "./dist/new-model-picker.ts"
     ],
-    "video": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/main/assets/demo.mp4",
-    "image": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/main/assets/demo.png"
+    "video": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/media-previews/assets/demo.mp4",
+    "image": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/media-previews/assets/demo.png"
   },
   "scripts": {
     "test": "node --test test/core.test.ts",

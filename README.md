@@ -5,9 +5,10 @@
 
 A grouped model picker extension for [Pi](https://github.com/badlogic/pi-mono).
 
-<video controls autoplay muted loop playsinline src="https://raw.githubusercontent.com/aleradev12/pi-model-picker/main/assets/demo.mp4">
-  <a href="https://github.com/aleradev12/pi-model-picker/blob/main/assets/demo.mp4"><img src="https://raw.githubusercontent.com/aleradev12/pi-model-picker/main/assets/demo.png" alt="Pi Model Picker demo"></a>
-</video>
+![Pi Model Picker demo](https://raw.githubusercontent.com/aleradev12/pi-model-picker/media-previews/assets/demo.png)
+
+<!-- GitHub renders this attachment as an inline video player; npm renders it as a link. -->
+https://github.com/user-attachments/assets/83093401-1fcd-404e-ad05-fac392f3039f
 
 
 
