@@ -1,6 +1,6 @@
 {
   "name": "@aleradev12/pi-model-picker",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publishConfig": {
     "access": "public"
   },
@@ -28,7 +28,8 @@
     "extensions": [
       "./dist/new-model-picker.ts"
     ],
-    "video": "https://github.com/user-attachments/assets/ae769fa6-a91b-47ec-9a1b-e828d69d185a"
+    "video": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/media-previews/assets/demo.mp4",
+    "image": "https://raw.githubusercontent.com/aleradev12/pi-model-picker/media-previews/assets/demo.png"
   },
   "scripts": {
     "test": "node --test test/core.test.ts",
